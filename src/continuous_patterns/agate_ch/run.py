@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -62,6 +63,25 @@ def _repo_root() -> Path:
 def agate_ch_results_dir(root: Path | None = None) -> Path:
     """Where Agate CH CLI writes runs: ``<repo>/results/agate_ch``."""
     return (root if root is not None else _repo_root()) / "results" / "agate_ch"
+
+
+def latest_main_sweep_for_publication(
+    results_agate: Path,
+    *,
+    exclude: Path | None = None,
+) -> Path | None:
+    """Newest ``sweep_*`` that looks like the six-config run (has ``no_pinning``)."""
+    sweeps = sorted(
+        (p for p in results_agate.glob("sweep_*") if p.is_dir()),
+        reverse=True,
+    )
+    ex = exclude.resolve() if exclude is not None else None
+    for p in sweeps:
+        if ex is not None and p.resolve() == ex:
+            continue
+        if (p / "no_pinning" / "summary.json").is_file():
+            return p
+    return None
 
 
 def load_yaml(path: Path) -> dict:
@@ -494,7 +514,7 @@ def run_postprocess(
     mx = max(float(np.max(f)) for f in frames) if frames else 1.0
     frames_n = [np.clip(f / max(mx, 1e-9), 0.0, 1.0) for f in frames]
     write_animation(frames_n, out_dir / "evolution.mp4", fps=30.0)
-    write_evolution_gif_phi_m(snaps_full, out_dir / "evolution.gif")
+    write_evolution_gif_phi_m(snaps_full, out_dir / "evolution.gif", L=L, R=R)
 
     h5_path = out_dir / "snapshots.h5"
     save_h5(h5_path, snaps_full)
@@ -819,7 +839,7 @@ def main() -> None:
             ma = root / ma
         if not ga.is_absolute():
             ga = root / ga
-        generate_paper_figures(ma, ga)
+        generate_paper_figures(ga, main_sweep_dir=ma)
         print(f"Paper figures: {ma / 'paper_figures'}/")
         return
 
@@ -935,6 +955,22 @@ def main() -> None:
                 sweep_dir=sweep_dir.resolve(),
                 total_wall_s=total_wall,
             )
+            results_root = agate_ch_results_dir(root)
+            main_pub = latest_main_sweep_for_publication(
+                results_root, exclude=sweep_dir.resolve()
+            )
+            try:
+                generate_paper_figures(sweep_dir, main_sweep_dir=main_pub)
+            except Exception as exc:
+                print(
+                    f"(publication) generate_paper_figures skipped: {exc}",
+                    file=sys.stderr,
+                )
+            paper_base = main_pub if main_pub is not None else sweep_dir
+            print(f"Publication figures: {paper_base.resolve() / 'paper_figures'}/")
+            wr_main = main_pub if main_pub is not None else sweep_dir
+            write_results_markdown(root, wr_main, sweep_dir)
+            print(f"Wrote {root.resolve() / 'RESULTS.md'}")
         else:
             report_main_sweep(
                 summaries,

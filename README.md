@@ -101,14 +101,16 @@ Each sweep creates a **new** directory **`results/agate_ch/sweep_<YYYYMMDD_HHMMS
 
    Adds `gamma_phase_diagram.png`, `gamma_phase_diagram.csv`, `gamma_scan_fields.png`, etc.
 
-5. **Publication bundle** — after you have **both** a main sweep directory and a gamma-scan directory (from steps 3–4), build figures under `paper_figures/` inside the **main** sweep folder:
+   At the **end** of this command, the runner also builds **`paper_figures/`** (via `publication.generate_paper_figures`) and writes **`RESULTS.md`** at the repo root (`publication.write_results_markdown`). If an earlier **main** sweep exists under `results/agate_ch/` (with `no_pinning/summary.json`), figures go under that sweep’s `paper_figures/` and the markdown table uses its `sweep_summary.csv`; otherwise everything is anchored to the gamma sweep directory.
+
+5. **Publication bundle (manual redo)** — optional; same as the auto step above if you need to regenerate without re-running the gamma scan. First CLI argument is the **main** sweep, second is the **gamma** sweep:
 
    ```bash
    uv run python -m continuous_patterns.agate_ch.run \
      --generate-paper results/agate_ch/sweep_<main_ts> results/agate_ch/sweep_<gamma_ts>
    ```
 
-6. **Results markdown** — write **`RESULTS.md`** at the repo root from sweep CSV/summaries (use `none` if you did not run a gamma sweep):
+6. **Results markdown (manual redo)** — optional; writes **`RESULTS.md`** from sweep CSV/summaries (`none` if you did not run a gamma sweep):
 
    ```bash
    uv run python -m continuous_patterns.agate_ch.run \

@@ -11,11 +11,43 @@ import matplotlib
 
 matplotlib.use("Agg")
 import numpy as np
+from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from scipy.ndimage import zoom
 
 from continuous_patterns.agate_ch.diagnostics import horizontal_centerline
 from continuous_patterns.agate_ch.model import build_geometry
+
+_ANTIPHASE_CMAP = "RdBu_r"
+
+
+def _antiphase_cmap():
+    try:
+        cmap = plt.colormaps[_ANTIPHASE_CMAP].copy()
+    except (AttributeError, KeyError, TypeError):
+        cmap = plt.cm.get_cmap(_ANTIPHASE_CMAP).copy()
+    cmap.set_bad(color="white")
+    return cmap
+
+
+def _antiphase_masked_crop(
+    phi_m: np.ndarray,
+    phi_c: np.ndarray,
+    *,
+    L: float,
+    R: float,
+) -> np.ndarray:
+    """Contrast φ_m−φ_c: clip [-1,1], crop cavity, mask outside χ."""
+    pm = np.asarray(phi_m, dtype=np.float64)
+    pc = np.asarray(phi_c, dtype=np.float64)
+    diff = np.clip(pm - pc, -1.0, 1.0)
+    geom = build_geometry(L, R, diff.shape[0])
+    chi = np.asarray(jnp.asarray(geom.chi))
+    s0, s1 = _cavity_square_slices(chi)
+    chi_c = chi[s0, s1]
+    crop = diff[s0, s1]
+    out = np.where(chi_c > 0.5, crop, np.nan).T
+    return out
 
 
 def _cavity_square_slices(
@@ -193,35 +225,43 @@ def write_evolution_gif_phi_m(
     snaps_full: list[tuple[int, Any, Any, Any]],
     path: Path,
     *,
-    n_frames: int = 100,
+    L: float = 200.0,
+    R: float = 80.0,
+    n_frames: int = 48,
     fps: float = 10.0,
-    max_side: int = 256,
+    max_side: int = 384,
 ) -> None:
-    """phi_m only, uniformly subsampled in time."""
+    """GIF of φ_m−φ_c (anti-phase); cavity interior colored, exterior white."""
     import imageio.v2 as imageio
 
     if not snaps_full:
         return
     ix = np.linspace(0, len(snaps_full) - 1, num=min(n_frames, len(snaps_full)))
     ix = np.unique(ix.astype(int))
-    frames: list[np.ndarray] = []
-    global_max = max(float(np.max(np.asarray(s[2]))) for s in snaps_full if len(s) > 2)
-    mx = max(global_max, 1e-9)
+    cmap = _antiphase_cmap()
+    norm = mcolors.Normalize(vmin=-1.0, vmax=1.0)
+    frames_rgb: list[np.ndarray] = []
     for k in ix:
-        pm = np.asarray(snaps_full[k][2])
-        if max(pm.shape) > max_side:
-            sc = max_side / max(pm.shape)
-            pm = zoom(pm, sc, order=1)
-        u = np.clip(pm / mx, 0.0, 1.0)
-        frames.append((u * 255.0).astype(np.uint8))
-    duration = 1.0 / fps
-    imageio.mimsave(
-        path,
-        frames,
-        duration=duration,
-        loop=0,
-        fps=fps,
-    )
+        pm = np.asarray(snaps_full[k][2], dtype=np.float64)
+        pc = np.asarray(snaps_full[k][3], dtype=np.float64)
+        geom = build_geometry(L, R, pm.shape[0])
+        chi = np.asarray(jnp.asarray(geom.chi))
+        diff = np.clip(pm - pc, -1.0, 1.0)
+        d = np.where(chi > 0.5, diff, np.nan)
+        rgba = cmap(norm(d))
+        rgb = (np.clip(rgba[..., :3], 0.0, 1.0) * 255.0).astype(np.uint8)
+        sc = max_side / max(rgb.shape[0], rgb.shape[1], 1)
+        if sc < 1.0:
+            rgb = (
+                np.clip(zoom(rgba[..., :3], (sc, sc, 1), order=1), 0.0, 1.0) * 255.0
+            ).astype(np.uint8)
+        frames_rgb.append(rgb)
+    imageio.mimsave(path, frames_rgb, fps=float(fps), loop=0)
+    mp4_path = path.with_suffix(".mp4")
+    try:
+        imageio.mimsave(mp4_path, frames_rgb, fps=float(fps), codec="libx264")
+    except Exception:
+        pass
 
 
 def choose_pub_field(phi_m: np.ndarray, phi_c: np.ndarray) -> tuple[np.ndarray, str]:
@@ -592,7 +632,6 @@ def plot_gamma_phase_diagram(
     gammas = [float(r["gamma"]) for r in rows]
     cv_pcts = [float(r["CV_q_pct"]) for r in rows]
     nb = [int(r["N_bands"]) for r in rows]
-    err_cv = [max(float(r.get("std_q_pct_err") or 0.0), 0.5) for r in rows]
     labyrinth = [bool(r.get("labyrinth")) for r in rows]
 
     with path_csv.open("w", newline="") as f:
@@ -624,19 +663,24 @@ def plot_gamma_phase_diagram(
             )
 
     fig, (axa, axb) = plt.subplots(1, 2, figsize=(11, 4.5))
-    axa.errorbar(
-        gammas,
-        cv_pcts,
-        yerr=err_cv,
-        fmt="o",
-        capsize=3,
-        color="tab:blue",
-    )
+    axa.plot(gammas, cv_pcts, "o-", color="tab:blue", lw=1.5, markersize=7)
     axa.axhline(50.0, color="gray", ls="--", lw=1, label="50% CV (regular regime)")
     axa.set_xlabel(r"$\gamma$")
     axa.set_ylabel(r"CV$(q)$ (%)")
     axa.set_title("A: Jabłczyński ratio variability")
     axa.legend(fontsize=8)
+    axa.text(
+        0.02,
+        0.98,
+        (
+            "Each point: single run — CV(q) is a pattern statistic,\n"
+            "not a measurement uncertainty."
+        ),
+        transform=axa.transAxes,
+        fontsize=7,
+        va="top",
+        color="0.35",
+    )
 
     axb.plot(gammas, nb, "s-", color="tab:green")
     for g, nn, lab in zip(gammas, nb, labyrinth, strict=False):
@@ -679,12 +723,16 @@ def compose_gamma_scan_publication_figure(
                 keys = sorted(h5.keys(), key=lambda x: int(x.split("_")[1]))
                 pm = np.asarray(h5[keys[-1]]["phi_m"])
                 pc = np.asarray(h5[keys[-1]]["phi_c"])
-            tot = pm + pc
-            geom = build_geometry(L, R, tot.shape[0])
-            chi = np.asarray(jnp.asarray(geom.chi))
-            s0, s1 = _cavity_square_slices(chi)
-            z = np.clip(tot[s0, s1], 0.0, None)
-            ax.imshow(z.T, origin="lower", cmap="cividis", interpolation="bilinear")
+            z = _antiphase_masked_crop(pm, pc, L=L, R=R)
+            cmap = _antiphase_cmap()
+            ax.imshow(
+                z,
+                origin="lower",
+                cmap=cmap,
+                vmin=-1.0,
+                vmax=1.0,
+                interpolation="bilinear",
+            )
         ax.axis("off")
         ax.set_title(ttl, fontsize=10)
 
@@ -742,12 +790,16 @@ def plot_paper_main_sweep_row(
             keys = sorted(h5.keys(), key=lambda x: int(x.split("_")[1]))
             pm = np.asarray(h5[keys[-1]]["phi_m"])
             pc = np.asarray(h5[keys[-1]]["phi_c"])
-        tot = pm + pc
-        geom = build_geometry(L, R, tot.shape[0])
-        chi = np.asarray(jnp.asarray(geom.chi))
-        s0, s1 = _cavity_square_slices(chi)
-        z = np.clip(tot[s0, s1], 0.0, None)
-        ax.imshow(z.T, origin="lower", cmap="cividis", interpolation="bilinear")
+        z = _antiphase_masked_crop(pm, pc, L=L, R=R)
+        cmap = _antiphase_cmap()
+        ax.imshow(
+            z,
+            origin="lower",
+            cmap=cmap,
+            vmin=-1.0,
+            vmax=1.0,
+            interpolation="bilinear",
+        )
         ax.axis("off")
         ax.set_title(cid, fontsize=10, pad=4)
     plt.subplots_adjust(left=0.01, right=0.99, top=0.92, bottom=0.08, wspace=0.05)
