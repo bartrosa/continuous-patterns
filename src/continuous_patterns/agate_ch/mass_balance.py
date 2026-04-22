@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import matplotlib
@@ -46,14 +47,11 @@ def dissolved_mass_disk_numpy(c: np.ndarray, *, L: float, r_disk: float) -> floa
     return float(np.sum(np.asarray(c) * mask) * dx**2)
 
 
-def compute_surface_flux_budget(
+def _surface_flux_budget_from_snapshots(
     snaps_full: list[tuple[int, Any, Any, Any]],
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    """Flux ∫dt vs Δ dissolved silica inside ``r < r_measure_fixed``.
-
-    Stops accumulating flux when mean ``φ_m+φ_c`` on that cylinder exceeds a threshold.
-    """
+    """Sparse snapshot-based Option B (legacy)."""
     if not snaps_full:
         return {
             "error": "no_snapshots",
@@ -164,16 +162,42 @@ def compute_surface_flux_budget(
         "r_measure_fixed": r_fixed,
         "silica_inside_initial": silica_inside_initial,
         "silica_inside_at_stop": silica_inside_at_stop,
+        "silica_inside_change": delta_si,
+        "dissolved_disk_initial": silica_inside_initial,
+        "dissolved_disk_at_stop": silica_inside_at_stop,
+        "dissolved_change": delta_si,
         "t_stop": t_stop,
         "flux_integrated_to_stop": flux_integrated_to_stop,
-        "silica_inside_change": delta_si,
         "residual": residual_b,
         "leak_pct": leak_pct_b,
         "front_reached_r_measure": front_reached_r_measure,
         "times_valid": times_flux,
         "flux_rates_valid": flux_rates,
         "budget_is_dissolved_c_only": True,
+        "budget_source": "snapshots_sparse",
+        "used_dense_flux_sampling": False,
     }
+
+
+def compute_surface_flux_budget(
+    snaps_full: list[tuple[int, Any, Any, Any]],
+    cfg: dict[str, Any],
+    *,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Retrieve dense flux budget from ``meta`` or fall back to snapshot iteration.
+
+    Prefer ``meta['mass_balance_surface_flux']`` populated by ``integrate_chunks``.
+    """
+    if meta is not None and meta.get("mass_balance_surface_flux"):
+        return meta["mass_balance_surface_flux"]
+
+    warnings.warn(
+        "Option B fallback: sparse snapshot-based flux integration. "
+        "Run with integrate_chunks flux_sample_dt (default 2.0) for dense sampling.",
+        stacklevel=2,
+    )
+    return _surface_flux_budget_from_snapshots(snaps_full, cfg)
 
 
 def plot_mass_balance_comparison(

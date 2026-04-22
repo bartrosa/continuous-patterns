@@ -13,6 +13,7 @@ import numpy as np
 from jax import lax
 
 from continuous_patterns.agate_ch.diagnostics import (
+    azimuthal_mean_at_radius_numpy,
     compute_influx_rate_physical,
     compute_influx_rate_physical_jnp,
     dissolved_silica_mass_inside_disk_numpy,
@@ -20,6 +21,7 @@ from continuous_patterns.agate_ch.diagnostics import (
     radial_shell_widths_from_dx,
     silica_mass_inside_disk_numpy,
 )
+from continuous_patterns.agate_ch.mass_balance import dissolved_mass_disk_numpy
 from continuous_patterns.agate_ch.model import (
     Geometry,
     build_geometry,
@@ -189,23 +191,25 @@ def imex_step(
         phim_new = phim_new * chi
         phic_new = phic_new * chi
 
-    dx_f64 = jnp.asarray(dx, jnp.float64)
+    dx_sq = dx * dx
 
+    # Accounting (fp32 — sufficient for residual bookkeeping)
     if prm.disable_dirichlet:
-        delta_pair = jnp.zeros(2, dtype=jnp.float64)
+        delta_pair = jnp.zeros(2, dtype=jnp.float32)
     elif prm.uniform_supersaturation:
+        chi_u = geom.chi
         c_before_bc = c_new
-        c_new = prm.c_0 * chi
-        delta_full = jnp.sum((c_new - c_before_bc).astype(jnp.float64)) * dx_f64**2
+        c_new = prm.c_0 * chi_u
+        delta_full = jnp.sum(c_new - c_before_bc) * dx_sq
         delta_pair = jnp.stack([delta_full, delta_full])
     else:
         c_before_bc = c_new
         ring_bc = geom.ring > 0.5
         c_new = jnp.where(ring_bc, prm.c_0, c_new)
-        dc = c_new.astype(jnp.float64) - c_before_bc.astype(jnp.float64)
-        thin_m = jnp.asarray(geom.ring_accounting, dtype=jnp.float64)
-        delta_thin = jnp.sum(dc * thin_m) * dx_f64**2
-        delta_full = jnp.sum(dc) * dx_f64**2
+        dc = c_new - c_before_bc
+        thin_m = jnp.asarray(geom.ring_accounting, dtype=jnp.float32)
+        delta_thin = jnp.sum(dc * thin_m) * dx_sq
+        delta_full = jnp.sum(dc) * dx_sq
         delta_pair = jnp.stack([delta_thin, delta_full])
 
     return (c_new, phim_new, phic_new), delta_pair
@@ -653,6 +657,105 @@ def integrate_chunks(
     milestones = [1000, 10000, 100000] if cfg.get("diagnose_overshoot", False) else []
     mi = 0
 
+    if cfg.get("flux_sample_dt") is not None:
+        flux_sample_dt = float(cfg["flux_sample_dt"])
+    elif cfg.get("flux_sample_every") is not None:
+        flux_sample_dt = float(cfg["flux_sample_every"]) * dt
+    else:
+        flux_sample_dt = 2.0
+
+    flux_sample_every = (
+        max(1, int(round(flux_sample_dt / dt))) if flux_sample_dt > 0 else 0
+    )
+
+    def steps_to_next_flux_sample(sc: int, fe: int) -> int:
+        if fe <= 0:
+            return 2**62
+        if sc % fe == 0:
+            return fe
+        return fe - (sc % fe)
+
+    flux_samples_t: list[float] = []
+    flux_samples_rate: list[float] = []
+    dissolved_disk_series: list[float] = []
+    front_reached_t: float | None = None
+
+    r_fixed_frac = float(
+        cfg.get(
+            "mass_balance_r_measure_fixed_fraction",
+            cfg.get("option_B_r_measure_fixed_fraction", 0.75),
+        )
+    )
+    r_fixed = r_fixed_frac * R
+    phi_thr = float(
+        cfg.get(
+            "mass_balance_front_phi_threshold",
+            cfg.get("option_B_front_phi_threshold", 0.3),
+        )
+    )
+    dx_val = L / n
+
+    def _sample_flux_and_disk(
+        sc: int,
+        st: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
+    ) -> None:
+        if flux_sample_every <= 0:
+            return
+        nonlocal front_reached_t
+        c_host = np.asarray(jax.device_get(st[0]))
+        pm_host = np.asarray(jax.device_get(st[1]))
+        pc_host = np.asarray(jax.device_get(st[2]))
+
+        r_out = r_fixed + dx_val
+        r_in = max(r_fixed - dx_val, 1e-6)
+        c_o = azimuthal_mean_at_radius_numpy(c_host, L=L, r_abs=r_out)
+        c_i = azimuthal_mean_at_radius_numpy(c_host, L=L, r_abs=r_in)
+        dc_dr = (c_o - c_i) / max(2.0 * dx_val, 1e-12)
+        perimeter = 2.0 * np.pi * r_fixed
+        flux_rate = float(prm.D_c * dc_dr * perimeter)
+
+        dissolved = dissolved_mass_disk_numpy(c_host, L=L, r_disk=r_fixed)
+
+        phi_tot = pm_host + pc_host
+        phi_at_rfix = azimuthal_mean_at_radius_numpy(phi_tot, L=L, r_abs=r_fixed)
+
+        t_phys = float(sc * dt)
+        flux_samples_t.append(t_phys)
+        flux_samples_rate.append(flux_rate)
+        dissolved_disk_series.append(dissolved)
+
+        if front_reached_t is None and phi_at_rfix > phi_thr:
+            front_reached_t = t_phys
+
+    def advance_steps(
+        st: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
+        segment_steps: int,
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        nonlocal step_count, influx_tracked
+        state_i = st
+        left_seg = segment_steps
+        while left_seg > 0:
+            if flux_sample_every > 0:
+                k = steps_to_next_flux_sample(step_count, flux_sample_every)
+                sub = min(k, left_seg, chunk_size)
+            else:
+                sub = min(left_seg, chunk_size)
+            s0 = _silica_total(state_i)
+            state_i = advance(state_i, sub)
+            s1 = _silica_total(state_i)
+            influx_tracked += s1 - s0
+            step_count += sub
+            left_seg -= sub
+            if bar is not None:
+                bar.update(sub)
+            if on_snapshot and step_count % snap_every == 0:
+                on_snapshot(step_count, *state_i)
+            if flux_sample_every > 0 and (
+                step_count % flux_sample_every == 0 or step_count >= n_steps
+            ):
+                _sample_flux_and_disk(step_count, state_i)
+        return state_i
+
     want_bar = _stderr_progress(cfg)
     bar = None
     if want_bar:
@@ -672,35 +775,22 @@ def integrate_chunks(
     if cfg.get("diagnose_overshoot", False):
         _print_diag(0, state)
 
+    if flux_sample_every > 0:
+        _sample_flux_and_disk(0, state)
+
     while remaining > 0:
         if mi < len(milestones) and step_count < milestones[mi]:
             need = milestones[mi] - step_count
             if 0 < need <= remaining:
-                s0 = _silica_total(state)
-                state = advance(state, need)
-                s1 = _silica_total(state)
-                influx_tracked += s1 - s0
-                step_count += need
+                state = advance_steps(state, need)
                 remaining -= need
                 _print_diag(step_count, state)
                 mi += 1
-                if bar is not None:
-                    bar.update(need)
-                if on_snapshot and step_count % snap_every == 0:
-                    on_snapshot(step_count, *state)
                 continue
 
         take = min(chunk_size, remaining)
-        s0 = _silica_total(state)
-        state = advance(state, take)
-        s1 = _silica_total(state)
-        influx_tracked += s1 - s0
-        step_count += take
+        state = advance_steps(state, take)
         remaining -= take
-        if bar is not None:
-            bar.update(take)
-        if on_snapshot and step_count % snap_every == 0:
-            on_snapshot(step_count, *state)
 
     if bar is not None:
         bar.close()
@@ -750,6 +840,69 @@ def integrate_chunks(
             file=sys.stderr,
         )
 
+    mass_balance_surface_flux: dict[str, Any] | None = None
+    if flux_sample_every > 0 and len(flux_samples_t) > 0:
+        times_arr = np.asarray(flux_samples_t, dtype=np.float64)
+        rates_arr = np.asarray(flux_samples_rate, dtype=np.float64)
+        diss_arr = np.asarray(dissolved_disk_series, dtype=np.float64)
+        if front_reached_t is not None:
+            mask = times_arr <= float(front_reached_t) + 1e-9
+        else:
+            mask = np.ones(times_arr.shape[0], dtype=bool)
+        times_f = times_arr[mask]
+        rates_f = rates_arr[mask]
+        diss_f = diss_arr[mask]
+
+        if len(times_f) >= 2:
+            flux_integrated = float(np.trapezoid(rates_f, times_f))
+        else:
+            flux_integrated = 0.0
+
+        if len(diss_f) >= 2:
+            dissolved_change = float(diss_f[-1] - diss_f[0])
+            dissolved_initial = float(diss_f[0])
+            dissolved_at_stop = float(diss_f[-1])
+        elif len(diss_f) == 1:
+            dissolved_initial = dissolved_at_stop = float(diss_f[0])
+            dissolved_change = 0.0
+        else:
+            dissolved_change = 0.0
+            dissolved_initial = float("nan")
+            dissolved_at_stop = float("nan")
+
+        residual_b = dissolved_change - flux_integrated
+        denom_b = max(
+            abs(dissolved_initial),
+            abs(dissolved_at_stop),
+            abs(flux_integrated),
+            1e-30,
+        )
+        leak_pct_b = 100.0 * residual_b / denom_b
+        t_stop_b = float(front_reached_t) if front_reached_t is not None else float(T)
+
+        mass_balance_surface_flux = {
+            "r_measure_fixed": float(r_fixed),
+            "flux_sample_dt": flux_sample_dt,
+            "flux_sample_every_steps": flux_sample_every,
+            "n_flux_samples": int(len(times_f)),
+            "front_reached_r_measure": front_reached_t is not None,
+            "t_stop": float(t_stop_b),
+            "dissolved_disk_initial": dissolved_initial,
+            "dissolved_disk_at_stop": dissolved_at_stop,
+            "dissolved_change": dissolved_change,
+            "silica_inside_initial": dissolved_initial,
+            "silica_inside_at_stop": dissolved_at_stop,
+            "silica_inside_change": dissolved_change,
+            "flux_integrated_to_stop": flux_integrated,
+            "residual": residual_b,
+            "leak_pct": leak_pct_b,
+            "times_valid": times_f.tolist(),
+            "flux_rates_valid": rates_f.tolist(),
+            "budget_is_dissolved_c_only": True,
+            "budget_source": "integrate_chunks_dense",
+            "used_dense_flux_sampling": True,
+        }
+
     meta = {
         "silica_initial": silica0,
         "silica_final": silica1,
@@ -764,6 +917,8 @@ def integrate_chunks(
         "silica_full_domain_final": silica_full_final,
         "ring_mask_sanity": ring_sanity,
     }
+    if mass_balance_surface_flux is not None:
+        meta["mass_balance_surface_flux"] = mass_balance_surface_flux
     return (*state, meta)
 
 
@@ -861,38 +1016,47 @@ def simulate(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def spectral_mass_conservation_diagnostic(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Fixed-horizon blob IC; no Dirichlet / no χ projection; returns leak %."""
-    dcfg = dict(cfg)
-    dcfg["disable_dirichlet"] = True
-    dcfg["initial_condition"] = "blob"
-    dcfg["T"] = float(cfg.get("spectral_mass_T", cfg.get("option_D_T", 1.0)))
-    dcfg["dt"] = float(
-        cfg.get("spectral_mass_dt", cfg.get("option_D_dt", cfg.get("dt", 0.01)))
-    )
-    dcfg["snapshot_every"] = max(
-        1,
-        int(
-            cfg.get(
-                "spectral_mass_snapshot_every",
-                cfg.get("option_D_snapshot_every", 10),
-            )
-        ),
-    )
-    dcfg["progress"] = False
-    raw = simulate(dcfg)
-    m0 = raw["total_mass_series"][0]
-    m1 = raw["total_mass_series"][-1]
-    drift = m1 - m0
-    leak_pct = 100.0 * drift / max(abs(m0), 1e-30)
-    return {
-        "leak_pct": leak_pct,
-        "total_mass_initial": m0,
-        "total_mass_final": m1,
-        "drift": drift,
-        "snapshot_times": raw["snapshot_times"],
-        "total_mass_series": raw["total_mass_series"],
-        "note": (
-            "Periodic IMEX+FFT without Dirichlet enforcement or χ projection; "
-            "mass integrated on the full periodic grid."
-        ),
-    }
+    """Fixed-horizon blob IC; no Dirichlet / no χ projection; returns leak %.
+
+    Inner ``simulate()`` runs in fp64 for sensitivity to tiny drift.
+    """
+    old_x64 = jax.config.jax_enable_x64
+    jax.config.update("jax_enable_x64", True)
+    try:
+        dcfg = dict(cfg)
+        dcfg["disable_dirichlet"] = True
+        dcfg["initial_condition"] = "blob"
+        dcfg["T"] = float(cfg.get("spectral_mass_T", cfg.get("option_D_T", 1.0)))
+        dcfg["dt"] = float(
+            cfg.get("spectral_mass_dt", cfg.get("option_D_dt", cfg.get("dt", 0.01)))
+        )
+        dcfg["snapshot_every"] = max(
+            1,
+            int(
+                cfg.get(
+                    "spectral_mass_snapshot_every",
+                    cfg.get("option_D_snapshot_every", 10),
+                )
+            ),
+        )
+        dcfg["progress"] = False
+        raw = simulate(dcfg)
+        m0 = raw["total_mass_series"][0]
+        m1 = raw["total_mass_series"][-1]
+        drift = m1 - m0
+        leak_pct = 100.0 * drift / max(abs(m0), 1e-30)
+        return {
+            "leak_pct": leak_pct,
+            "total_mass_initial": m0,
+            "total_mass_final": m1,
+            "drift": drift,
+            "snapshot_times": raw["snapshot_times"],
+            "total_mass_series": raw["total_mass_series"],
+            "precision": "fp64",
+            "note": (
+                "Periodic IMEX+FFT without Dirichlet; full-grid mass; "
+                "run in fp64 for drift sensitivity."
+            ),
+        }
+    finally:
+        jax.config.update("jax_enable_x64", old_x64)

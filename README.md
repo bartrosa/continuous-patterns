@@ -120,7 +120,7 @@ Each sweep creates a **new** directory **`results/agate_ch/sweep_<YYYYMMDD_HHMMS
 
 During integration, **`tqdm` prints a step progress bar on stderr** (skipped when stderr is not a terminal). Use **`--no-progress`** or YAML **`progress: false`** to silence it.
 
-The printed **mass balance** line uses physical flux bookkeeping where available; compare with **`summary.json`** in each run folder.
+The printed **mass balance** line reports **Option B** (`mass_balance_surface_flux.leak_pct`), independent of snapshot cadence; **`sweep_summary.csv`** column **`mass_balance_leak_pct`** matches it.
 
 **Reading the Jabłczyński figure:** subplot (b) shows `q_n` vs band index — a **flat** curve means geometric progression of spacings (Liesegang-like when CV is low and mean `q > 1.05`). Subplot (a) is log–log `d_n` vs `r_n`; slope near 1 is consistent with classical Liesegang scaling.
 

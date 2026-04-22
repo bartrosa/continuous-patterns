@@ -5,10 +5,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import jax
-
-jax.config.update("jax_enable_x64", True)
-
-import jax.numpy as jnp  # noqa: E402 — x64 must be set before jax.numpy
+import jax.numpy as jnp
 
 
 class Geometry(NamedTuple):

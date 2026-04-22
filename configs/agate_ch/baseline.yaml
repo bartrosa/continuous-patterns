@@ -22,7 +22,13 @@ use_ratchet: true
 
 dt: 0.01
 T: 10000.0
-snapshot_every: 4000
+# Was 4000 (250 snaps): storage/UI cadence — independent of flux sampling below.
+snapshot_every: 1000
+
+# Option B (∫ flux dt vs dissolved disk): physics cadence, NOT tied to snapshots.
+# At dt=0.01, flux_sample_dt=2 → sample every 200 steps (~5000 samples / T=10000).
+flux_sample_dt: 2.0
+
 seed: 42
 uniform_supersaturation: false
 

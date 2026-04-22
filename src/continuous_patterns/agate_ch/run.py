@@ -21,7 +21,6 @@ from continuous_patterns.agate_ch.diagnostics import (
     labyrinth_heuristic,
     moganite_chalcedony_anticorr,
     overshoot_fraction,
-    physical_mass_balance_from_snapshots,
     radial_profile,
     total_silica_numpy,
 )
@@ -112,12 +111,22 @@ def _csv_val(x: Any) -> str:
     return str(x)
 
 
+def option_b_leak_pct_from_summary(summ: dict[str, Any]) -> float:
+    """Residual % for Option B (dense flux vs dissolved disk), from ``summary.json``."""
+    surf = summ.get("mass_balance_surface_flux") or {}
+    v = surf.get("leak_pct")
+    if v is not None and v == v:
+        return float(v)
+    return float("nan")
+
+
 def sweep_summary_row(summ: dict[str, Any]) -> dict[str, str]:
     mf = summ.get("metrics_at_final") or {}
     cvq = mf.get("cv_q", float("nan"))
     cvd = mf.get("cv_d_spacings", float("nan"))
     cvq_pct = (cvq * 100.0) if cvq == cvq else float("nan")
     cvd_pct = (cvd * 100.0) if cvd == cvd else float("nan")
+    mb_lb = option_b_leak_pct_from_summary(summ)
     return {
         "config_id": _csv_val(summ.get("label")),
         "N_peak": _csv_val(summ.get("peak_band_count")),
@@ -133,7 +142,7 @@ def sweep_summary_row(summ: dict[str, Any]) -> dict[str, str]:
         ),
         "anticorrelation": _csv_val(summ.get("moganite_chalcedony_anticorrelation")),
         "overshoot_pct": _csv_val(summ.get("overshoot_fraction_final")),
-        "mass_balance_pct": _csv_val(summ.get("mass_balance_percent")),
+        "mass_balance_leak_pct": _csv_val(mb_lb if mb_lb == mb_lb else ""),
         "wall_seconds": _csv_val(summ.get("wall_seconds")),
     }
 
@@ -187,13 +196,10 @@ def report_main_sweep(
     lines.append("=== AGATE CH — MAIN SWEEP COMPLETE ===")
     lines.append(f"Total wall-clock: {fmt_hms(total_wall_s)}")
     lines.append("")
-    lines.append("PART I — physical mass balance |residual| %:")
+    lines.append("PART I — Option B dense flux mass balance |residual| %:")
     mb_list: list[float] = []
     for cid in ids_order:
-        mbp = summaries.get(cid, {}).get("mass_balance_percent_physical")
-        if mbp is None:
-            mbp = summaries.get(cid, {}).get("mass_balance_percent")
-        v = float(mbp) if mbp is not None and mbp == mbp else float("nan")
+        v = option_b_leak_pct_from_summary(summaries.get(cid, {}))
         if v == v:
             mb_list.append(abs(v))
         sv = f"{v:.4f}" if v == v else "nan"
@@ -206,10 +212,7 @@ def report_main_sweep(
     mb_spec_vals: list[float] = []
     for cid in ids_order:
         s = summaries.get(cid, {})
-        mbp = s.get("mass_balance_percent_physical")
-        if mbp is None:
-            mbp = s.get("mass_balance_percent")
-        vb = float(mbp) if mbp is not None and mbp == mbp else float("nan")
+        vb = option_b_leak_pct_from_summary(s)
         if vb == vb:
             mb_phys_vals.append(abs(vb))
         sm = s.get("spectral_mass_conservation") or s.get(
@@ -226,7 +229,8 @@ def report_main_sweep(
     phys_s = f"{max_phys:.4f}" if max_phys == max_phys else "nan"
     spec_s = f"{max_spec:.6f}" if max_spec == max_spec else "nan"
     lines.append(
-        f"  Physical flux residual (wall gradient): {phys_s}%    [pass if <5%]"
+        f"  Option B dense flux residual (max across configs): {phys_s}%    "
+        "[pass if <5%]"
     )
     lines.append(
         f"  Spectral kernel mass drift (periodic check): {spec_s}% [pass if <0.1%]"
@@ -385,7 +389,7 @@ def write_sweep_summaries_csv_txt(rows: list[dict[str, str]], sweep_dir: Path) -
         "classification",
         "anticorrelation",
         "overshoot_pct",
-        "mass_balance_pct",
+        "mass_balance_leak_pct",
         "wall_seconds",
     ]
     csv_path = sweep_dir / "sweep_summary.csv"
@@ -409,10 +413,11 @@ def write_sweep_summaries_csv_txt(rows: list[dict[str, str]], sweep_dir: Path) -
 
 
 def mass_balance_percent_from_meta(meta: dict[str, Any]) -> float:
-    """Prefer physical flux residual; fall back to direct bookkeeping."""
-    mp = meta.get("mass_balance_percent_physical")
-    if mp is not None:
-        return float(mp)
+    """Primary: Option B ``leak_pct``; fall back to direct silica bookkeeping."""
+    surf = meta.get("mass_balance_surface_flux") or {}
+    lp = surf.get("leak_pct")
+    if lp is not None and lp == lp:
+        return float(lp)
     si = meta.get("silica_initial")
     sf = meta.get("silica_final")
     fl = meta.get("cumulative_boundary_flux_mass")
@@ -438,31 +443,12 @@ def enrich_meta_physical_flux(
     meta: dict[str, Any],
     snaps_full: SnapList,
 ) -> None:
-    phy = physical_mass_balance_from_snapshots(
+    """Set Option B budget: dense run in ``meta``, else snapshot fallback."""
+    meta["mass_balance_surface_flux"] = compute_surface_flux_budget(
         snaps_full,
         cfg,
-        silica_initial=float(meta["silica_initial"]),
-        silica_final=float(meta["silica_final"]),
+        meta=meta,
     )
-    meta.update(phy)
-
-    odx = float(cfg.get("physical_flux_outer_dx", 3.0))
-    idx = float(cfg.get("physical_flux_inner_dx", 5.0))
-    meta["option_A_ring_at_r_minus_3dx"] = {
-        "note": (
-            "Invalid once the front passes the ring; legacy ring-gradient comparison."
-        ),
-        "physical_flux_outer_dx": odx,
-        "physical_flux_inner_dx": idx,
-        "influx_total_physical": phy["influx_total_physical"],
-        "residual_physical": phy["residual_physical"],
-        "mass_balance_percent_physical": phy["mass_balance_percent_physical"],
-        "mass_balance_method": phy.get(
-            "mass_balance_method_physical", "physical_flux_integral"
-        ),
-    }
-
-    meta["mass_balance_surface_flux"] = compute_surface_flux_budget(snaps_full, cfg)
 
 
 def save_h5(path: Path, snaps: SnapList) -> None:
@@ -566,7 +552,8 @@ def run_postprocess(
     save_final_pub(pub_field, L=L, R=R, path=out_dir / "final_pub.png")
 
     ovs = overshoot_fraction(pm, pc)
-    mb_physical = mass_balance_percent_from_meta(meta)
+    surf_budget = meta.get("mass_balance_surface_flux") or {}
+    mb_option_b = mass_balance_percent_from_meta(meta)
     mb_direct = float(meta.get("mass_balance_percent_direct", float("nan")))
     lab_detect = labyrinth_heuristic(pm, pc, L=L, R=R, final_band_count=final_nb)
 
@@ -589,16 +576,13 @@ def run_postprocess(
         "cumulative_boundary_flux_mass_direct": meta.get(
             "cumulative_boundary_flux_mass"
         ),
-        "mass_balance_percent": mb_physical,
-        "mass_balance_percent_physical": meta.get("mass_balance_percent_physical"),
+        "mass_balance_percent": mb_option_b,
         "mass_balance_percent_direct": meta.get("mass_balance_percent_direct"),
-        "influx_total_physical": meta.get("influx_total_physical"),
-        "residual_physical": meta.get("residual_physical"),
-        "mass_balance_method": "physical_flux_integral",
+        "mass_balance_method": "option_B_dense_surface_flux",
         "mass_balance_note": (
-            "physical: residual = silica_final − silica_initial − ∫flux_dt "
-            "(trapezoidal on snapshot influx rates from wall gradient); "
-            "direct: chunk sum of Δ(silica) ≡ (final−initial) is tautological."
+            "Option B: ∫ flux_rate dt vs Δ dissolved silica in disk r < r_measure "
+            "(dense samples from integrate_chunks; independent of snapshot_every); "
+            "direct: chunk sum of Δ(silica) bookkeeping is tautological."
         ),
         "labyrinth_detected": lab_detect,
         "bands_r_outer_in": mf.get("r_outer_in"),
@@ -616,7 +600,6 @@ def run_postprocess(
             "N_b": radial_metrics["N_b"],
             "classification": radial_metrics["classification"],
         },
-        "option_A_ring_at_r_minus_3dx": meta.get("option_A_ring_at_r_minus_3dx"),
         "mass_balance_surface_flux": _json_safe_surface_flux_budget(
             meta.get("mass_balance_surface_flux")
             or meta.get("option_B_fixed_surface")
@@ -652,8 +635,19 @@ def run_postprocess(
     )
     print(f"Overshoot final: {ovs:.2f}%                     [pass if <1%]")
     mbd = mb_direct if mb_direct == mb_direct else float("nan")
-    mbp = mb_physical if mb_physical == mb_physical else float("nan")
-    print(f"Mass balance (physical flux): {mbp:.4f}%            [pass if |·|<5%]")
+    mbp_surf = surf_budget.get("leak_pct")
+    mbp = (
+        float(mbp_surf)
+        if mbp_surf is not None and mbp_surf == mbp_surf
+        else float("nan")
+    )
+    n_samples = int(surf_budget.get("n_flux_samples", 0))
+    source = str(surf_budget.get("budget_source", "unknown"))
+    mbp_show = f"{mbp:.4f}" if mbp == mbp else "nan"
+    print(
+        f"Mass balance (Option B dense flux): {mbp_show}%     "
+        f"[N={n_samples}, {source}]     [pass if |·|<5%]"
+    )
     print(f"Mass balance (direct/chunk): {mbd:.6f}%        [tautology check]")
     print("")
     print("MULTI-SLICE BAND COUNT:")
@@ -747,6 +741,9 @@ def run_reanalyze(
                 "mass_balance_percent_direct", old.get("mass_balance_percent")
             ),
         }
+        sf_old = old.get("mass_balance_surface_flux")
+        if isinstance(sf_old, dict):
+            meta["mass_balance_surface_flux"] = sf_old
         cfg = merge_cfg(cfg, old.get("parameters", {}))
     rho_m = float(cfg.get("rho_m", 1.0))
     rho_c = float(cfg.get("rho_c", 1.0))

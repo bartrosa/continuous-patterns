@@ -188,7 +188,7 @@ cython_debug/
 results/*
 !results/example/
 !results/example/**
-!results/agate_ch/
+results/agate_ch/
 !results/agate_ch/README.md
 
 # Ruff stuff:

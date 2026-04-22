@@ -27,9 +27,10 @@ def write_results_markdown(
     for sj in sorted(main_sweep_dir.glob("*/summary.json")):
         try:
             sd = json.loads(sj.read_text())
-            mp = sd.get("mass_balance_percent_physical")
-            if mp is not None:
-                mb_list.append(abs(float(mp)))
+            surf = sd.get("mass_balance_surface_flux") or {}
+            lp = surf.get("leak_pct")
+            if lp is not None and lp == lp:
+                mb_list.append(abs(float(lp)))
         except (json.JSONDecodeError, OSError, ValueError):
             continue
     mb_line = f"{max(mb_list):.4f}%" if mb_list else "(run main sweep to populate)"
@@ -87,8 +88,9 @@ def write_results_markdown(
 1. This is 2D; real agates are 3D (see NOTES.md).
 2. No calibration to measured band spacings from natural samples.
 3. Dimensionless τ is not mapped to SI time without additional modeling.
-4. Numerical mass balance residual (physical flux bookkeeping): worst-case |relative|
-   across six main configs ≈ **{mb_line}** — see individual `summary.json`.
+4. Numerical mass balance residual (Option B dense flux vs dissolved disk):
+   worst-case |relative| across six main configs ≈ **{mb_line}** —
+   see `mass_balance_surface_flux.leak_pct` in each `summary.json`.
 
 ## Key numbers
 
