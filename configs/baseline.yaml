@@ -1,0 +1,20 @@
+# Agate falsification — Model C baseline (production grid)
+grid: 512
+L: 200.0
+R: 80.0
+W: 1.0
+gamma: 2.0
+kappa: 0.5
+D_c: 1.0
+k_reaction: 0.5
+M_m: 0.1
+M_c: 1.0
+c_sat: 0.2
+c_0: 1.0
+c_ostwald: 0.6
+w_ostwald: 0.1
+dt: 0.01
+T: 5000.0
+snapshot_every: 2000
+seed: 42
+uniform_supersaturation: false

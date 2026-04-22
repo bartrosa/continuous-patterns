@@ -51,8 +51,36 @@ uv run pre-commit run --all-files
 
 `--all-files` only lints **tracked** files; add new code with `git add` first (or use the hooks on commit).
 
+## Agate Cahn–Hilliard falsification (2D)
+
+Model C for **moganite / chalcedony** with a reactive source, in a circular cavity. This is a *falsification* run: if banding appears and the **Jabłczyński** spacing ratios `q_n = d_n/d_{n-1}` are **nearly constant** and `q̄ > 1.05`, the pattern is **Liesegang-like** (classical radial geometry); if bands exist but ratios **vary**, you may have a **non-Liesegang** mechanism; **fewer than three** bands ⇒ **NO BANDS** (null / no clear periodic zoning).
+
+Install simulation extras (JAX CUDA stack + HDF5/plotting):
+
+```bash
+uv sync --extra agate --extra cuda   # or --extra cpu on machines without GPU
+uv run python -m continuous_patterns.agate_ch.run --config configs/baseline.yaml
+```
+
+Quick smoke (small grid, short time):
+
+```bash
+uv run python -m continuous_patterns.agate_ch.run --config configs/baseline.yaml --quick
+```
+
+Parameter sweep (six variants, comparison figure):
+
+```bash
+uv run python -m continuous_patterns.agate_ch.run --config configs/baseline.yaml --sweep configs/sweep.yaml
+```
+
+Artifacts land under `results/run_<timestamp>/` (baseline) or `results/sweep_<timestamp>/`.
+
+**Reading the Jabłczyński figure:** subplot (b) shows `q_n` vs band index — a **flat** curve means geometric progression of spacings (Liesegang-like when CV is low and mean `q > 1.05`). Subplot (a) is log–log `d_n` vs `r_n`; slope near 1 is consistent with classical Liesegang scaling.
+
 ## Layout
 
-- `src/continuous_patterns/` — package code
+- `src/continuous_patterns/` — package code (`agate_ch/` = CH falsification experiment)
+- `configs/` — YAML for runs
 - `tests/` — pytest
 - `uv.lock` — lockfile (commit it for reproducible installs)
