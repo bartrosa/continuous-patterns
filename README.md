@@ -53,32 +53,34 @@ uv run pre-commit run --all-files
 
 ## Agate Cahn–Hilliard falsification (2D)
 
-Model C for **moganite / chalcedony** with a reactive source, in a circular cavity. This is a *falsification* run: if banding appears and the **Jabłczyński** spacing ratios `q_n = d_n/d_{n-1}` are **nearly constant** and `q̄ > 1.05`, the pattern is **Liesegang-like** (classical radial geometry); if bands exist but ratios **vary**, you may have a **non-Liesegang** mechanism; **fewer than three** bands ⇒ **NO BANDS** (null / no clear periodic zoning).
+Model C for **moganite / chalcedony** with a reactive source, in a circular cavity. This is a *falsification* run: if banding appears and the **Jabłczyński** spacing ratios `q_n = d_n/d_{n-1}` are **nearly constant** and `q̄ > 1.05`, the pattern is **Liesegang-like** (classical radial geometry); if bands exist but ratios **vary**, you may have a **non-Liesegang** mechanism; **fewer than three** resolved bands ⇒ **INSUFFICIENT BANDS** in the diagnostic (v1.5+).
+
+**v1.5** adds a **barrier** on φ outside [0,1], **soft clip** to [−0.05,1.05], **ratcheting** moganite nucleation, time-resolved **kymograph** / **band count** plots, and a **mass balance** that uses total silica in (c, φ_m, φ_c) plus an estimated **boundary flux** of c.
 
 Install simulation extras (JAX CUDA stack + HDF5/plotting):
 
 ```bash
 uv sync --extra agate --extra cuda   # or --extra cpu on machines without GPU
-uv run python -m continuous_patterns.agate_ch.run --config configs/baseline.yaml
+uv run python -m continuous_patterns.agate_ch.run --config configs/baseline_v15.yaml
 ```
 
 Quick smoke (small grid, short time):
 
 ```bash
-uv run python -m continuous_patterns.agate_ch.run --config configs/baseline.yaml --quick
+uv run python -m continuous_patterns.agate_ch.run --config configs/baseline_v15.yaml --quick
 ```
 
-Parameter sweep (six variants, comparison figure):
+Parameter sweep (four pinning / overshoot variants, radial + kymograph grid):
 
 ```bash
-uv run python -m continuous_patterns.agate_ch.run --config configs/baseline.yaml --sweep configs/sweep.yaml
+uv run python -m continuous_patterns.agate_ch.run --config configs/baseline_v15.yaml --sweep configs/sweep.yaml
 ```
 
-Artifacts land under `results/run_<timestamp>/` (baseline) or `results/sweep_<timestamp>/`. Those folders are **gitignored** by default; see **`results/example/`** for an artifact checklist without running the solver.
+Outputs under `results/run_<timestamp>/` include `band_count_evolution.png`, `kymograph.png`, `jablczynski.png` (final), and `jablczynski_timeresolved.png` (at peak band count). Those folders are **gitignored** by default; see **`results/example/`** for a file checklist.
 
 During integration, **`tqdm` prints a step progress bar on stderr** (skipped when stderr is not a terminal, e.g. pytest). Use **`--no-progress`** or YAML **`progress: false`** to silence it.
 
-The **`Mass balance error`** line compares ∫(c+φ_m+φ_c)·χ dA at the end vs t=0. With **Dirichlet supersaturation on the rim**, mass is injected continuously, so **large percentages are expected** and do not mean the stepper failed.
+The printed **mass balance error** uses (Δ total silica − ∫ flux_in dt) / initial total silica (%); **≤2%** on a tuned run indicates the boundary bookkeeping is consistent.
 
 **Reading the Jabłczyński figure:** subplot (b) shows `q_n` vs band index — a **flat** curve means geometric progression of spacings (Liesegang-like when CV is low and mean `q > 1.05`). Subplot (a) is log–log `d_n` vs `r_n`; slope near 1 is consistent with classical Liesegang scaling.
 

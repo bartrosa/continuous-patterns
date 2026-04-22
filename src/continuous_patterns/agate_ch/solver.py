@@ -9,13 +9,14 @@ from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import lax
 
 from continuous_patterns.agate_ch.model import (
     Geometry,
     build_geometry,
-    dfdphi,
-    gamma_sigma,
+    dfdphi_total,
+    gamma_sigma_ratchet,
     precipitation,
 )
 
@@ -24,6 +25,7 @@ class SimParams(NamedTuple):
     W: float
     gamma: float
     kappa: float
+    lambda_barrier: float
     D_c: float
     k_reaction: float
     M_m: float
@@ -33,13 +35,20 @@ class SimParams(NamedTuple):
     c_ostwald: float
     w_ostwald: float
     uniform_supersaturation: bool
+    phi_m_ratchet_low: float
+    phi_m_ratchet_high: float
+    ratchet_enabled: float
+    rho_m: float
+    rho_c: float
 
 
 def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
+    W = float(cfg["W"])
     return SimParams(
-        W=float(cfg["W"]),
+        W=W,
         gamma=float(cfg["gamma"]),
         kappa=float(cfg["kappa"]),
+        lambda_barrier=float(cfg.get("lambda_barrier", 10.0)),
         D_c=float(cfg["D_c"]),
         k_reaction=float(cfg["k_reaction"]),
         M_m=float(cfg["M_m"]),
@@ -49,6 +58,11 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
         c_ostwald=float(cfg["c_ostwald"]),
         w_ostwald=float(cfg["w_ostwald"]),
         uniform_supersaturation=bool(cfg.get("uniform_supersaturation", False)),
+        phi_m_ratchet_low=float(cfg.get("phi_m_ratchet_low", 0.3)),
+        phi_m_ratchet_high=float(cfg.get("phi_m_ratchet_high", 0.5)),
+        ratchet_enabled=1.0 if bool(cfg.get("use_ratchet", True)) else 0.0,
+        rho_m=float(cfg.get("rho_m", 1.0)),
+        rho_c=float(cfg.get("rho_c", 1.0)),
     )
 
 
@@ -64,11 +78,25 @@ def imex_step(
     dt: float,
 ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
     c, phim, phic = state
-    Gm = precipitation(c, phim, phic, k_reaction=prm.k_reaction, c_sat=prm.c_sat)
-    psi_m, psi_c = gamma_sigma(c, prm.c_ostwald, prm.w_ostwald)
+    if prm.uniform_supersaturation:
+        c = prm.c_0 * geom.chi
+    else:
+        c = jnp.where(geom.ring > 0.5, prm.c_0, c)
 
-    fm = dfdphi(phim, prm.W)
-    fc = dfdphi(phic, prm.W)
+    Gm = precipitation(c, phim, phic, k_reaction=prm.k_reaction, c_sat=prm.c_sat)
+    rk = jnp.asarray(prm.ratchet_enabled)
+    psi_m, psi_c = gamma_sigma_ratchet(
+        c,
+        phim,
+        prm.c_ostwald,
+        prm.w_ostwald,
+        prm.phi_m_ratchet_low,
+        prm.phi_m_ratchet_high,
+        rk,
+    )
+
+    fm = dfdphi_total(phim, prm.W, prm.lambda_barrier)
+    fc = dfdphi_total(phic, prm.W, prm.lambda_barrier)
     lap_mu_m = laplacian(fm + prm.gamma * phic, geom.k_sq)
     lap_mu_c = laplacian(fc + prm.gamma * phim, geom.k_sq)
 
@@ -86,8 +114,8 @@ def imex_step(
     phic_hat_new = (pc + dt * jnp.fft.fft2(rhs_c)) / denom_c
 
     c_new = jnp.maximum(jnp.fft.ifft2(c_hat_new).real, 0.0)
-    phim_new = jnp.clip(jnp.fft.ifft2(phim_hat_new).real, 0.0, 1.0)
-    phic_new = jnp.clip(jnp.fft.ifft2(phic_hat_new).real, 0.0, 1.0)
+    phim_new = jnp.clip(jnp.fft.ifft2(phim_hat_new).real, -0.05, 1.05)
+    phic_new = jnp.clip(jnp.fft.ifft2(phic_hat_new).real, -0.05, 1.05)
 
     chi = geom.chi
     c_new = c_new * chi
@@ -136,6 +164,18 @@ def initial_state(
     return c, phim, phic
 
 
+def total_silica_jnp(
+    c: jnp.ndarray,
+    phim: jnp.ndarray,
+    phic: jnp.ndarray,
+    chi: jnp.ndarray,
+    dx: float,
+    rho_m: float,
+    rho_c: float,
+) -> jnp.ndarray:
+    return jnp.sum((c + rho_m * phim + rho_c * phic) * chi) * dx**2
+
+
 def _stderr_progress(cfg: dict[str, Any]) -> bool:
     if "progress" in cfg:
         return bool(cfg["progress"])
@@ -150,6 +190,8 @@ def integrate_chunks(
     ) = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, dict[str, Any]]:
     """Run simulation; optional snapshot callback (step index, c, phim, phic)."""
+    from continuous_patterns.agate_ch.diagnostics import boundary_flux_mass_rate
+
     L = float(cfg["L"])
     R = float(cfg["R"])
     n = int(cfg["grid"])
@@ -169,6 +211,12 @@ def integrate_chunks(
         uniform_supersaturation=prm.uniform_supersaturation,
     )
 
+    silica0 = float(
+        total_silica_jnp(
+            state[0], state[1], state[2], geom.chi, geom.dx, prm.rho_m, prm.rho_c
+        )
+    )
+
     n_steps = max(1, int(round(T / dt)))
     body = make_scan_fn(geom, prm, dt)
 
@@ -176,7 +224,7 @@ def integrate_chunks(
     def advance(s: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], length: int):
         return lax.scan(body, s, xs=None, length=length)[0]
 
-    mass0 = float(jnp.sum((state[0] + state[1] + state[2]) * geom.chi) * geom.dx**2)
+    flux_cumulative = 0.0
     step_count = 0
     remaining = n_steps
     want_bar = _stderr_progress(cfg)
@@ -197,6 +245,10 @@ def integrate_chunks(
     while remaining > 0:
         take = min(chunk_size, remaining)
         state = advance(state, take)
+        c_np = np.asarray(jax.device_get(state[0]))
+        flux_cumulative += boundary_flux_mass_rate(c_np, L, R, prm.D_c, prm.c_0) * (
+            take * dt
+        )
         step_count += take
         remaining -= take
         if bar is not None:
@@ -206,8 +258,22 @@ def integrate_chunks(
     if bar is not None:
         bar.close()
 
-    mass1 = float(jnp.sum((state[0] + state[1] + state[2]) * geom.chi) * geom.dx**2)
-    meta = {"mass_initial": mass0, "mass_final": mass1, "geom": geom, "prm": prm}
+    silica1 = float(
+        total_silica_jnp(
+            state[0], state[1], state[2], geom.chi, geom.dx, prm.rho_m, prm.rho_c
+        )
+    )
+    mb_err = abs(silica1 - silica0 - flux_cumulative) / max(abs(silica0), 1e-15) * 100.0
+    meta = {
+        "silica_initial": silica0,
+        "silica_final": silica1,
+        "cumulative_boundary_flux_mass": flux_cumulative,
+        "mass_balance_percent": mb_err,
+        "geom": geom,
+        "prm": prm,
+        "mass_initial": silica0,
+        "mass_final": silica1,
+    }
     return (*state, meta)
 
 

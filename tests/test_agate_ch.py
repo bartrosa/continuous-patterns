@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from continuous_patterns.agate_ch.diagnostics import band_metrics, radial_profile
-from continuous_patterns.agate_ch.model import build_geometry, dfdphi
+from continuous_patterns.agate_ch.model import build_geometry, dfdphi_total
 from continuous_patterns.agate_ch.solver import integrate_chunks, laplacian
 
 
@@ -47,7 +47,7 @@ def test_fft_roundtrip_real() -> None:
 
 
 def test_mass_balance_bounded_short_run() -> None:
-    """Smoke: integrated χ-weighted tracer remains bounded (boundary + chemistry)."""
+    """Smoke: closed-form mass balance residual stays moderate on short run."""
     cfg = {
         "grid": 48,
         "L": 100.0,
@@ -55,6 +55,7 @@ def test_mass_balance_bounded_short_run() -> None:
         "W": 1.0,
         "gamma": 2.0,
         "kappa": 0.5,
+        "lambda_barrier": 10.0,
         "D_c": 0.01,
         "k_reaction": 0.0,
         "M_m": 0.05,
@@ -63,19 +64,22 @@ def test_mass_balance_bounded_short_run() -> None:
         "c_0": 0.4,
         "c_ostwald": 0.6,
         "w_ostwald": 0.1,
+        "phi_m_ratchet_low": 0.3,
+        "phi_m_ratchet_high": 0.5,
+        "use_ratchet": True,
         "dt": 0.001,
         "T": 0.05,
         "snapshot_every": 99999,
         "seed": 0,
         "uniform_supersaturation": False,
+        "progress": False,
     }
     _, _, _, meta = integrate_chunks(cfg, chunk_size=25, on_snapshot=None)
-    m0, m1 = meta["mass_initial"], meta["mass_final"]
-    rel = abs(m1 - m0) / max(abs(m0), 1e-9)
-    assert rel < 0.1
+    mb = float(meta["mass_balance_percent"])
+    assert mb < 15.0
 
 
 def test_shapes_dfdphi() -> None:
     phi = jnp.ones((4, 4)) * 0.2
-    g = dfdphi(phi, 1.0)
+    g = dfdphi_total(phi, 1.0, 10.0)
     assert g.shape == phi.shape
