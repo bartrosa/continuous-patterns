@@ -184,6 +184,11 @@ cython_debug/
 # Visual Studio Code / Cursor (workspace settings stay local)
 .vscode/
 
+# Simulation outputs (HDF5 / mp4 / PNG dumps); keep results/example/ tracked for reviewers
+results/*
+!results/example/
+!results/example/**
+
 # Ruff stuff:
 .ruff_cache/
 

@@ -74,7 +74,7 @@ Parameter sweep (six variants, comparison figure):
 uv run python -m continuous_patterns.agate_ch.run --config configs/baseline.yaml --sweep configs/sweep.yaml
 ```
 
-Artifacts land under `results/run_<timestamp>/` (baseline) or `results/sweep_<timestamp>/`.
+Artifacts land under `results/run_<timestamp>/` (baseline) or `results/sweep_<timestamp>/`. Those folders are **gitignored** by default; see **`results/example/`** for an artifact checklist without running the solver.
 
 During integration, **`tqdm` prints a step progress bar on stderr** (skipped when stderr is not a terminal, e.g. pytest). Use **`--no-progress`** or YAML **`progress: false`** to silence it.
 

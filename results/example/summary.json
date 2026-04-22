@@ -1,0 +1,13 @@
+{
+  "label": "BASELINE",
+  "N_b": 0,
+  "mean_q": null,
+  "std_q": null,
+  "cv_q_percent": null,
+  "classification": "NO BANDS",
+  "wall_seconds": 0.0,
+  "mass_balance_percent": 0.0,
+  "mass_balance_note": "Example file only; see real run for values. Open boundary => large % is not a closed-system error.",
+  "bands_r_outer_in": [],
+  "_comment": "Illustrative keys only; 'parameters' omitted here to keep diff noise low."
+}
