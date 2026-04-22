@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def test_package_version() -> None:
-    import continuum_patterns as cp
+    import continuous_patterns as cp
 
     assert cp.__version__
 

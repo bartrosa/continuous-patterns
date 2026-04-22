@@ -1,6 +1,6 @@
-# continuum-patterns
+# continuous-patterns
 
-Research-oriented experiments with **JAX** (continuum / pattern formation). Tooling: **uv**, **Ruff**, **pytest**, **pre-commit** (including **Conventional Commits** on `commit-msg`).
+Research-oriented experiments with **JAX** (continuous media / pattern formation). Tooling: **uv**, **Ruff**, **pytest**, **pre-commit** (including **Conventional Commits** on `commit-msg`).
 
 ## Requirements
 
@@ -53,6 +53,6 @@ uv run pre-commit run --all-files
 
 ## Layout
 
-- `src/continuum_patterns/` — package code
+- `src/continuous_patterns/` — package code
 - `tests/` — pytest
 - `uv.lock` — lockfile (commit it for reproducible installs)

@@ -3,13 +3,13 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "continuum-patterns"
+name = "continuous-patterns"
 version = "0.1.0"
-description = "Research-oriented continuum patterns experiments (JAX)."
+description = "Research-oriented continuous-media pattern experiments (JAX)."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
-authors = [{ name = "continuum-patterns contributors" }]
+authors = [{ name = "continuous-patterns contributors" }]
 dependencies = []
 
 [project.optional-dependencies]
