@@ -6,8 +6,11 @@ from pathlib import Path
 from typing import Any
 
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
+import matplotlib
+
+matplotlib.use("Agg")
 import numpy as np
+from matplotlib import pyplot as plt
 
 from continuous_patterns.agate_ch.model import build_geometry
 

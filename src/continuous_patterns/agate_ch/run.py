@@ -135,6 +135,10 @@ def run_one(
         "classification": metrics["classification"],
         "wall_seconds": wall,
         "mass_balance_percent": mb_err,
+        "mass_balance_note": (
+            "Ratio of change in ∫(c+φ_m+φ_c)·χ dA vs t=0; "
+            "Dirichlet wall injects solute — not a closed conservation metric."
+        ),
         "bands_r_outer_in": metrics["r_outer_in"],
     }
     with (out_dir / "summary.json").open("w") as f:
@@ -158,6 +162,10 @@ def run_one(
         print(jab)
         print(f"Classification: {metrics['classification']}")
         print(f"Mass balance error: {mb_err:.3f}%")
+        print(
+            "  (open cavity: wall keeps c=c₀; large % vs t=0 is expected, "
+            "not a closed-system error)"
+        )
         print(f"Outputs: {out_dir}/")
 
     return summary, rc, pt_r
@@ -168,6 +176,11 @@ def main() -> None:
     ap.add_argument("--config", type=str, default="configs/baseline.yaml")
     ap.add_argument("--sweep", type=str, default="", help="Optional sweep YAML")
     ap.add_argument("--quick", action="store_true", help="small grid / short time")
+    ap.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="disable tqdm step bar (stdout stays clean for logs)",
+    )
     args = ap.parse_args()
     root = _repo_root()
     cfg_path = Path(args.config)
@@ -175,6 +188,8 @@ def main() -> None:
         cfg_path = root / cfg_path
 
     baseline = load_yaml(cfg_path)
+    if args.no_progress:
+        baseline["progress"] = False
     if args.quick:
         baseline["grid"] = 128
         baseline["T"] = 2.0

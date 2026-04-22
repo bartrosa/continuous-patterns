@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from functools import partial
 from typing import Any, NamedTuple
@@ -84,9 +85,9 @@ def imex_step(
     phim_hat_new = (pm + dt * jnp.fft.fft2(rhs_m)) / denom_m
     phic_hat_new = (pc + dt * jnp.fft.fft2(rhs_c)) / denom_c
 
-    c_new = jnp.fft.ifft2(c_hat_new).real
-    phim_new = jnp.fft.ifft2(phim_hat_new).real
-    phic_new = jnp.fft.ifft2(phic_hat_new).real
+    c_new = jnp.maximum(jnp.fft.ifft2(c_hat_new).real, 0.0)
+    phim_new = jnp.clip(jnp.fft.ifft2(phim_hat_new).real, 0.0, 1.0)
+    phic_new = jnp.clip(jnp.fft.ifft2(phic_hat_new).real, 0.0, 1.0)
 
     chi = geom.chi
     c_new = c_new * chi
@@ -135,6 +136,12 @@ def initial_state(
     return c, phim, phic
 
 
+def _stderr_progress(cfg: dict[str, Any]) -> bool:
+    if "progress" in cfg:
+        return bool(cfg["progress"])
+    return sys.stderr.isatty()
+
+
 def integrate_chunks(
     cfg: dict[str, Any],
     chunk_size: int,
@@ -172,13 +179,32 @@ def integrate_chunks(
     mass0 = float(jnp.sum((state[0] + state[1] + state[2]) * geom.chi) * geom.dx**2)
     step_count = 0
     remaining = n_steps
+    want_bar = _stderr_progress(cfg)
+    bar = None
+    if want_bar:
+        try:
+            from tqdm.auto import tqdm
+
+            bar = tqdm(
+                total=n_steps,
+                unit="step",
+                desc="agate-ch",
+                file=sys.stderr,
+                mininterval=0.3,
+            )
+        except ImportError:
+            bar = None
     while remaining > 0:
         take = min(chunk_size, remaining)
         state = advance(state, take)
         step_count += take
         remaining -= take
+        if bar is not None:
+            bar.update(take)
         if on_snapshot and step_count % snap_every == 0:
             on_snapshot(step_count, *state)
+    if bar is not None:
+        bar.close()
 
     mass1 = float(jnp.sum((state[0] + state[1] + state[2]) * geom.chi) * geom.dx**2)
     meta = {"mass_initial": mass0, "mass_final": mass1, "geom": geom, "prm": prm}

@@ -76,6 +76,10 @@ uv run python -m continuous_patterns.agate_ch.run --config configs/baseline.yaml
 
 Artifacts land under `results/run_<timestamp>/` (baseline) or `results/sweep_<timestamp>/`.
 
+During integration, **`tqdm` prints a step progress bar on stderr** (skipped when stderr is not a terminal, e.g. pytest). Use **`--no-progress`** or YAML **`progress: false`** to silence it.
+
+The **`Mass balance error`** line compares ∫(c+φ_m+φ_c)·χ dA at the end vs t=0. With **Dirichlet supersaturation on the rim**, mass is injected continuously, so **large percentages are expected** and do not mean the stepper failed.
+
 **Reading the Jabłczyński figure:** subplot (b) shows `q_n` vs band index — a **flat** curve means geometric progression of spacings (Liesegang-like when CV is low and mean `q > 1.05`). Subplot (a) is log–log `d_n` vs `r_n`; slope near 1 is consistent with classical Liesegang scaling.
 
 ## Layout
