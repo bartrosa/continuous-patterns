@@ -1,0 +1,55 @@
+# Main falsification sweep: pinning / ratchet / seed robustness questions
+runs:
+  - id: no_pinning
+    params:
+      gamma: 2.0
+      M_m: 0.1
+      lambda_barrier: 10.0
+      use_ratchet: false
+
+  - id: medium_pinning
+    params:
+      gamma: 4.0
+      M_m: 0.01
+      lambda_barrier: 10.0
+      use_ratchet: true
+      phi_m_ratchet_low: 0.3
+      phi_m_ratchet_high: 0.5
+
+  - id: strong_pinning
+    params:
+      gamma: 6.0
+      M_m: 0.005
+      lambda_barrier: 10.0
+      use_ratchet: true
+      phi_m_ratchet_low: 0.2
+      phi_m_ratchet_high: 0.4
+
+  - id: ratchet_only
+    params:
+      gamma: 2.0
+      M_m: 0.1
+      lambda_barrier: 10.0
+      use_ratchet: true
+      phi_m_ratchet_low: 0.3
+      phi_m_ratchet_high: 0.5
+
+  - id: medium_pinning_seed2
+    params:
+      gamma: 4.0
+      M_m: 0.01
+      lambda_barrier: 10.0
+      use_ratchet: true
+      phi_m_ratchet_low: 0.3
+      phi_m_ratchet_high: 0.5
+      seed: 123
+
+  - id: medium_pinning_seed3
+    params:
+      gamma: 4.0
+      M_m: 0.01
+      lambda_barrier: 10.0
+      use_ratchet: true
+      phi_m_ratchet_low: 0.3
+      phi_m_ratchet_high: 0.5
+      seed: 999

@@ -5,12 +5,17 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import jax
-import jax.numpy as jnp
+
+jax.config.update("jax_enable_x64", True)
+
+import jax.numpy as jnp  # noqa: E402 — x64 must be set before jax.numpy
 
 
 class Geometry(NamedTuple):
     chi: jnp.ndarray
     ring: jnp.ndarray
+    ring_accounting: jnp.ndarray  # thin annulus R−2dx ≤ r < R (accounting only)
+    rv: jnp.ndarray
     k_sq: jnp.ndarray
     k_four: jnp.ndarray
     dx: float
@@ -35,6 +40,7 @@ def build_geometry(L: float, R: float, n: int, eps_scale: float = 2.0) -> Geomet
     chi = 0.5 * (1.0 - jnp.tanh((rv - R) / (eps_scale * dx)))
     ring = jnp.exp(-0.5 * ((rv - R) / (2.5 * dx)) ** 2)
     ring = jnp.where(ring > 0.35, 1.0, 0.0)
+    ring_accounting = (rv < R) & (rv >= R - 2.0 * dx)
 
     fx = jnp.fft.fftfreq(n, d=dx)
     ky = jnp.fft.fftfreq(n, d=dx)
@@ -43,7 +49,16 @@ def build_geometry(L: float, R: float, n: int, eps_scale: float = 2.0) -> Geomet
     k_sq = kx**2 + kk**2
     k_four = k_sq**2
     return Geometry(
-        chi=chi, ring=ring, k_sq=k_sq, k_four=k_four, dx=dx, xc=xc, yc=yc, R=R
+        chi=chi,
+        ring=ring,
+        ring_accounting=ring_accounting,
+        rv=rv,
+        k_sq=k_sq,
+        k_four=k_four,
+        dx=dx,
+        xc=xc,
+        yc=yc,
+        R=R,
     )
 
 

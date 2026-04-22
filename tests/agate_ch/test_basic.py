@@ -1,11 +1,11 @@
-"""v1.5 acceptance tests (overshoot, short runs)."""
+"""Acceptance tests for overshoot slack and barrier behaviour."""
 
 from __future__ import annotations
 
 import jax.numpy as jnp
 import numpy as np
 
-from continuous_patterns.agate_ch.diagnostics import overshoot_slack_fraction
+from continuous_patterns.agate_ch.diagnostics import overshoot_slack_fraction_cavity
 from continuous_patterns.agate_ch.model import dfdphi_total
 from continuous_patterns.agate_ch.solver import integrate_chunks
 
@@ -16,8 +16,8 @@ def test_barrier_derivative_shape() -> None:
     assert g.shape == p.shape
 
 
-def test_overshoot_slack_after_1k_steps() -> None:
-    """<1% of pixels outside [-0.05,1.05] after 1000 steps (v1.5-style parameters)."""
+def test_overshoot_control() -> None:
+    """After 1000 steps: <1% cavity pixels outside soft clip [-0.05, 1.05]."""
     cfg = {
         "grid": 64,
         "L": 200.0,
@@ -43,9 +43,10 @@ def test_overshoot_slack_after_1k_steps() -> None:
         "seed": 42,
         "uniform_supersaturation": False,
         "progress": False,
+        "print_mass_balance": False,
     }
     _, pm, pc, _ = integrate_chunks(cfg, chunk_size=250, on_snapshot=None)
     pm = np.asarray(pm)
     pc = np.asarray(pc)
-    frac = overshoot_slack_fraction(pm, pc)
-    assert frac < 1.0, f"slack overshoot {frac}% >= 1%"
+    frac = overshoot_slack_fraction_cavity(pm, pc, L=cfg["L"], R=cfg["R"])
+    assert frac < 1.0, f"cavity slack overshoot {frac}% >= 1%"

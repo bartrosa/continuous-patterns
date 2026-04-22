@@ -73,10 +73,11 @@ def test_mass_balance_bounded_short_run() -> None:
         "seed": 0,
         "uniform_supersaturation": False,
         "progress": False,
+        "print_mass_balance": False,
     }
     _, _, _, meta = integrate_chunks(cfg, chunk_size=25, on_snapshot=None)
-    mb = float(meta["mass_balance_percent"])
-    assert mb < 15.0
+    mb = float(meta["mass_balance_percent_direct"])
+    assert mb < 1.0, f"mass balance {mb}% should be tiny with chunk silica deltas"
 
 
 def test_shapes_dfdphi() -> None:

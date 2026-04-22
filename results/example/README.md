@@ -1,6 +1,6 @@
 # Example run layout (for reviewers)
 
-A real baseline run writes a **timestamped** folder, e.g. `results/run_20260422_083900/`, with:
+A real baseline run writes a **timestamped** folder under **`results/agate_ch/`**, e.g. `results/agate_ch/run_20260422_083900/`, with:
 
 | File | Role |
 |------|------|
@@ -11,4 +11,4 @@ A real baseline run writes a **timestamped** folder, e.g. `results/run_20260422_
 | `snapshots.h5` | Field stacks (not stored here) |
 | `summary.json` | Parameters, band count, mean/std of q, classification, wall time |
 
-`summary.json` in this folder is a **schema example** only; numbers are illustrative. After `uv run python -m continuous_patterns.agate_ch.run --config configs/baseline.yaml` you will get a full output tree under `results/run_<timestamp>/`.
+`summary.json` in this folder is a **schema example** only; numbers are illustrative. After `uv run python -m continuous_patterns.agate_ch.run --config configs/agate_ch/baseline.yaml` you will get a full output tree under `results/agate_ch/run_<timestamp>/`.

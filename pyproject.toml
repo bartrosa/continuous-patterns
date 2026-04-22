@@ -41,6 +41,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "slow: optional long-running GPU integration tests",
+]
 
 [tool.ruff]
 target-version = "py312"
