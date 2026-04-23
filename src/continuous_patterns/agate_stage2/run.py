@@ -1,4 +1,4 @@
-"""CLI entry; default config ``configs/agate_ch/baseline.yaml``."""
+"""CLI entry for Stage II bulk relaxation — default nested ``configs/baseline.yaml``."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import jax
 import numpy as np
 import yaml
 
-from continuous_patterns.agate_ch.diagnostics import (
+from continuous_patterns.agate_stage2.diagnostics import (
     analyse_all_snapshots,
     band_metrics,
     labyrinth_heuristic,
@@ -25,11 +25,8 @@ from continuous_patterns.agate_ch.diagnostics import (
     radial_profile,
     total_silica_numpy,
 )
-from continuous_patterns.agate_ch.mass_balance import (
-    compute_surface_flux_budget,
-    dissolved_mass_disk_numpy,
-)
-from continuous_patterns.agate_ch.plotting import (
+from continuous_patterns.agate_stage2.mass_balance import compute_surface_flux_budget
+from continuous_patterns.agate_stage2.plotting import (
     choose_pub_field,
     plot_band_count_evolution,
     plot_canonical_slice,
@@ -47,11 +44,11 @@ from continuous_patterns.agate_ch.plotting import (
     write_animation,
     write_evolution_gif_phi_m,
 )
-from continuous_patterns.agate_ch.publication import (
+from continuous_patterns.agate_stage2.publication import (
     generate_paper_figures,
     write_results_markdown,
 )
-from continuous_patterns.agate_ch.solver import (
+from continuous_patterns.agate_stage2.solver import (
     build_initial_state,
     cfg_to_sim_params,
     simulate_to_host,
@@ -63,43 +60,13 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def agate_ch_results_dir(root: Path | None = None) -> Path:
-    """Where Agate CH CLI writes runs: ``<repo>/results/agate_ch``."""
-    return (root if root is not None else _repo_root()) / "results" / "agate_ch"
-
-
-def latest_main_sweep_for_publication(
-    results_agate: Path,
-    *,
-    exclude: Path | None = None,
-) -> Path | None:
-    """Newest ``sweep_*`` that looks like the six-config run (has ``no_pinning``)."""
-    sweeps = sorted(
-        (p for p in results_agate.glob("sweep_*") if p.is_dir()),
-        reverse=True,
-    )
-    ex = exclude.resolve() if exclude is not None else None
-    for p in sweeps:
-        if ex is not None and p.resolve() == ex:
-            continue
-        if (p / "no_pinning" / "summary.json").is_file():
-            return p
-    return None
-
-
-def load_yaml(path: Path) -> dict:
-    with path.open() as f:
-        return yaml.safe_load(f)
-
-
-def merge_cfg(base: dict, overlay: dict) -> dict:
-    out = dict(base)
-    out.update(overlay)
-    return out
+def agate_stage2_results_dir(root: Path | None = None) -> Path:
+    """Default output root: ``<repo>/results/agate_stage2``."""
+    return (root if root is not None else _repo_root()) / "results" / "agate_stage2"
 
 
 def flatten_nested_cfg(raw: dict[str, Any]) -> dict[str, Any]:
-    """Expand nested experiment/grid/physics/time/diagnostics YAML to flat solver cfg."""
+    """Expand nested experiment/grid/physics/time/diagnostics blocks to flat solver cfg."""
     if not isinstance(raw.get("physics"), dict):
         return raw
     out: dict[str, Any] = {}
@@ -130,30 +97,50 @@ def flatten_nested_cfg(raw: dict[str, Any]) -> dict[str, Any]:
         out["progress"] = bool(diag["progress_stderr"])
     if diag.get("mass_balance_mode") == "spectral_only":
         out.setdefault("record_spectral_mass_diagnostic", True)
-        if out.get("flux_sample_dt") is None:
-            out["flux_sample_dt"] = 0.0
+    if diag.get("mass_balance_mode") == "spectral_only" and out.get("flux_sample_dt") is None:
+        out["flux_sample_dt"] = 0.0
     ic = raw.get("initial_condition")
     if isinstance(ic, dict):
-        out["initial_condition"] = str(ic.get("type", "default"))
-        if "snapshot_path" in ic:
-            out["snapshot_path"] = ic["snapshot_path"]
+        out["initial_condition"] = str(ic.get("type", "homogeneous"))
+        for key in ("phi_m0", "phi_c0", "noise_amplitude"):
+            if key in ic:
+                out[key] = ic[key]
+        if "c0" in ic:
+            out["ic_c0"] = ic["c0"]
     elif isinstance(ic, str):
         out["initial_condition"] = ic
     if out.get("enable_dirichlet") is False:
         out["print_ring_mask_sanity"] = False
+    return out
 
-    skip_roots = {
-        "experiment",
-        "grid",
-        "physics",
-        "time",
-        "diagnostics",
-        "initial_condition",
-    }
-    for k, v in raw.items():
-        if k not in skip_roots:
-            out[k] = v
 
+def latest_main_sweep_for_publication(
+    results_agate: Path,
+    *,
+    exclude: Path | None = None,
+) -> Path | None:
+    """Newest ``sweep_*`` that looks like the six-config run (has ``no_pinning``)."""
+    sweeps = sorted(
+        (p for p in results_agate.glob("sweep_*") if p.is_dir()),
+        reverse=True,
+    )
+    ex = exclude.resolve() if exclude is not None else None
+    for p in sweeps:
+        if ex is not None and p.resolve() == ex:
+            continue
+        if (p / "no_pinning" / "summary.json").is_file():
+            return p
+    return None
+
+
+def load_yaml(path: Path) -> dict:
+    with path.open() as f:
+        return yaml.safe_load(f)
+
+
+def merge_cfg(base: dict, overlay: dict) -> dict:
+    out = dict(base)
+    out.update(overlay)
     return out
 
 
@@ -507,7 +494,7 @@ def enrich_meta_physical_flux(
     if cfg.get("mass_balance_mode") == "spectral_only":
         meta["mass_balance_surface_flux"] = {
             "skipped": True,
-            "reason": "spectral_only: Option B rim flux not used.",
+            "reason": "spectral_only: no Option B rim flux (periodic bulk / no Dirichlet).",
             "leak_pct": None,
         }
         return
@@ -627,34 +614,6 @@ def run_postprocess(
     n_steps = int(round(T / dt))
     g_ = int(cfg["grid"])
 
-    c_mass_disk: dict[str, Any] | None = None
-    if not cfg.get("project_c_on_cavity", True):
-        c_init = np.asarray(snaps_full[0][1], dtype=np.float64)
-        c_fin = np.asarray(c, dtype=np.float64)
-        m0 = dissolved_mass_disk_numpy(c_init, L=L, r_disk=R)
-        m1 = dissolved_mass_disk_numpy(c_fin, L=L, r_disk=R)
-        rel_pct = 100.0 * (m1 - m0) / m0 if m0 != 0 else float("nan")
-        n_ = c_fin.shape[0]
-        dx_ = L / n_
-        full_m0 = float(np.sum(c_init) * dx_**2)
-        full_m1 = float(np.sum(c_fin) * dx_**2)
-        rel_full_pct = 100.0 * (full_m1 - full_m0) / full_m0 if full_m0 != 0 else float("nan")
-        xc_ = L / 2.0
-        xs_ = (np.arange(n_, dtype=np.float64) + 0.5) * dx_
-        xv_, yv_ = np.meshgrid(xs_, xs_, indexing="ij")
-        rv_ = np.sqrt((xv_ - xc_) ** 2 + (yv_ - xc_) ** 2)
-        inside = rv_ < R
-        c_mass_disk = {
-            "mass_c_disk_initial": m0,
-            "mass_c_disk_final": m1,
-            "relative_change_disk_percent": rel_pct,
-            "mass_c_full_domain_initial": full_m0,
-            "mass_c_full_domain_final": full_m1,
-            "relative_change_full_domain_percent": rel_full_pct,
-            "c_mean_inside_disk_final": float(np.mean(c_fin[inside])),
-            "c_std_inside_disk_final": float(np.std(c_fin[inside])),
-        }
-
     summary: dict[str, Any] = {
         "label": label,
         "parameters": cfg,
@@ -704,35 +663,9 @@ def run_postprocess(
         "silica_full_domain_final": meta.get("silica_full_domain_final"),
         "ring_mask_sanity": meta.get("ring_mask_sanity"),
     }
-    if c_mass_disk is not None:
-        summary["c_mass_conservation_disk"] = c_mass_disk
 
     with (out_dir / "summary.json").open("w") as f:
         json.dump(summary, f, indent=2)
-
-    if cfg.get("save_final_state"):
-        np.savez_compressed(
-            out_dir / "final_state.npz",
-            phi_m=np.asarray(pm),
-            phi_c=np.asarray(pc),
-            c=np.asarray(c),
-        )
-        final_meta = {
-            "t_final": float(T),
-            "grid": int(cfg["grid"]),
-            "L": L,
-            "R": R,
-            "gamma": float(cfg["gamma"]),
-            "M_m": float(cfg["M_m"]),
-            "M_c": float(cfg["M_c"]),
-            "seed": int(cfg.get("seed", 0)),
-            "enable_reaction": cfg.get("enable_reaction", True),
-            "enable_dirichlet": cfg.get("enable_dirichlet", True),
-            "parameters": cfg,
-        }
-        (out_dir / "final_state_meta.json").write_text(
-            json.dumps(final_meta, indent=2, default=str)
-        )
 
     d_list = mf.get("d") or []
     sp_str = ", ".join(f"{x:.4f}" for x in d_list) if d_list else "(none)"
@@ -745,7 +678,7 @@ def run_postprocess(
     klass = mf.get("classification", "")
 
     print("")
-    print(f"=== AGATE CH — {label} ===")
+    print(f"=== AGATE STAGE II — {label} ===")
     print(f"Grid: {g_}×{g_}  T: {T}  steps: {n_steps}  wall-clock: {fmt_hms(wall_seconds)}")
     print(f"Overshoot final: {ovs:.2f}%                     [pass if <1%]")
     mbd = mb_direct if mb_direct == mb_direct else float("nan")
@@ -759,21 +692,6 @@ def run_postprocess(
         f"[N={n_samples}, {source}]     [pass if |·|<5%]"
     )
     print(f"Mass balance (direct/chunk): {mbd:.6f}%        [tautology check]")
-    if c_mass_disk is not None:
-        cm = c_mass_disk
-        print(
-            "c mass (full periodic domain): "
-            f"initial={cm['mass_c_full_domain_initial']:.6g}, "
-            f"final={cm['mass_c_full_domain_final']:.6g}, "
-            f"Δ={cm['relative_change_full_domain_percent']:.4f}%"
-        )
-        print(
-            "c mass (disk r<R only): "
-            f"initial={cm['mass_c_disk_initial']:.6g}, "
-            f"final={cm['mass_c_disk_final']:.6g}, "
-            f"Δ={cm['relative_change_disk_percent']:.4f}% "
-            "(may redistribute when c is not projected onto χ)"
-        )
     print("")
     print("MULTI-SLICE BAND COUNT:")
     print(f"  Peak: {peak_nb} at t={pk_time}")
@@ -876,8 +794,14 @@ def run_reanalyze(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Agate Cahn–Hilliard falsification runner")
-    ap.add_argument("--config", type=str, default="configs/agate_ch/baseline.yaml")
+    ap = argparse.ArgumentParser(
+        description="Stage II agate — pure periodic Cahn–Hilliard relaxation runner"
+    )
+    ap.add_argument(
+        "--config",
+        type=str,
+        default="configs/agate_stage2/baseline.yaml",
+    )
     ap.add_argument("--sweep", type=str, default="", help="Optional sweep YAML")
     ap.add_argument("--quick", action="store_true", help="small grid / short time")
     ap.add_argument(
@@ -889,7 +813,7 @@ def main() -> None:
         "--T",
         type=float,
         default=None,
-        help="override time horizon (flat key T)",
+        help="override time horizon (maps to flat key T)",
     )
     ap.add_argument(
         "--snapshot-every",
@@ -908,7 +832,10 @@ def main() -> None:
         "--out-dir",
         type=str,
         default="",
-        help=("output directory for --reanalyze-dir (default: results/agate_ch/run_<timestamp>)"),
+        help=(
+            "output directory for --reanalyze-dir "
+            "(default: results/agate_stage2/stage2_<timestamp>)"
+        ),
     )
     ap.add_argument(
         "--generate-paper",
@@ -977,7 +904,7 @@ def main() -> None:
             if not out_dir.is_absolute():
                 out_dir = root / out_dir
         else:
-            out_dir = agate_ch_results_dir(root) / f"run_{ts}"
+            out_dir = agate_stage2_results_dir(root) / f"stage2_{ts}"
         out_dir.mkdir(parents=True, exist_ok=True)
         lab = cfg_path.stem
         run_reanalyze(src, baseline, out_dir, label=lab)
@@ -989,7 +916,7 @@ def main() -> None:
         if not sw_path.is_absolute():
             sw_path = root / sw_path
         sweep = load_yaml(sw_path)
-        sweep_dir = agate_ch_results_dir(root) / f"sweep_{ts}"
+        sweep_dir = agate_stage2_results_dir(root) / f"sweep_{ts}"
         sweep_dir.mkdir(parents=True, exist_ok=True)
         profiles: list[tuple[str, np.ndarray, np.ndarray]] = []
         kymos: list[tuple[str, list[float], list[float]]] = []
@@ -1060,7 +987,7 @@ def main() -> None:
                 sweep_dir=sweep_dir.resolve(),
                 total_wall_s=total_wall,
             )
-            results_root = agate_ch_results_dir(root)
+            results_root = agate_stage2_results_dir(root)
             main_pub = latest_main_sweep_for_publication(results_root, exclude=sweep_dir.resolve())
             try:
                 generate_paper_figures(sweep_dir, main_sweep_dir=main_pub)
@@ -1083,7 +1010,7 @@ def main() -> None:
             )
         return
 
-    out_dir = agate_ch_results_dir(root) / f"run_{ts}"
+    out_dir = agate_stage2_results_dir(root) / f"stage2_{ts}"
     if args.out_dir:
         out_dir = Path(args.out_dir)
         if not out_dir.is_absolute():

@@ -11,7 +11,7 @@ matplotlib.use("Agg")
 import numpy as np
 from matplotlib import pyplot as plt
 
-from continuous_patterns.agate_ch.diagnostics import azimuthal_mean_at_radius_numpy
+from continuous_patterns.agate_stage2.diagnostics import azimuthal_mean_at_radius_numpy
 
 
 def silica_mass_disk_numpy(

@@ -15,8 +15,8 @@ from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from scipy.ndimage import zoom
 
-from continuous_patterns.agate_ch.diagnostics import horizontal_centerline
-from continuous_patterns.agate_ch.model import build_geometry
+from continuous_patterns.agate_stage2.diagnostics import horizontal_centerline
+from continuous_patterns.agate_stage2.model import build_geometry
 
 _ANTIPHASE_CMAP = "RdBu_r"
 

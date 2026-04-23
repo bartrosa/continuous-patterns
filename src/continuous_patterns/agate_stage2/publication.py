@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from continuous_patterns.agate_ch.plotting import (
+from continuous_patterns.agate_stage2.plotting import (
     compose_gamma_scan_publication_figure,
     plot_gamma_phase_diagram,
     plot_paper_canonical_antiphase_slice,
@@ -217,7 +217,7 @@ def generate_paper_figures(
             rho_title=ac,
         )
         try:
-            from continuous_patterns.agate_ch.run import load_snapshots_h5
+            from continuous_patterns.agate_stage2.run import load_snapshots_h5
 
             snaps_pub = load_snapshots_h5(mp_dir / "snapshots.h5")
             write_evolution_gif_phi_m(

@@ -13,7 +13,7 @@ from scipy.ndimage import map_coordinates
 from scipy.signal import find_peaks
 from scipy.stats import spearmanr
 
-from continuous_patterns.agate_ch.model import build_geometry
+from continuous_patterns.agate_stage2.model import build_geometry
 
 
 def radial_profile(
