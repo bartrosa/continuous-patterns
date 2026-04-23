@@ -15,6 +15,9 @@ class Geometry(NamedTuple):
     rv: jnp.ndarray
     k_sq: jnp.ndarray
     k_four: jnp.ndarray
+    #: component wavenumber squares (``(2π kx_fftfreq)²`` etc.) for anisotropic κ.
+    kx_sq: jnp.ndarray
+    ky_sq: jnp.ndarray
     dx: float
     xc: float
     yc: float
@@ -45,6 +48,8 @@ def build_geometry(L: float, R: float, n: int, eps_scale: float = 2.0) -> Geomet
     kk = 2 * jnp.pi * ky[None, :]
     k_sq = kx**2 + kk**2
     k_four = k_sq**2
+    kx_sq = kx**2
+    ky_sq = kk**2
     return Geometry(
         chi=chi,
         ring=ring,
@@ -52,6 +57,8 @@ def build_geometry(L: float, R: float, n: int, eps_scale: float = 2.0) -> Geomet
         rv=rv,
         k_sq=k_sq,
         k_four=k_four,
+        kx_sq=kx_sq,
+        ky_sq=ky_sq,
         dx=dx,
         xc=xc,
         yc=yc,

@@ -5,6 +5,11 @@ Dirichlet silica on the cavity rim defaults to scalar ``c_0``. Optional
 linear ramp ``c_0(y)`` on the **enforcement ring only** — see
 :func:`rim_dirichlet_c_targets`.
 
+**Anisotropic gradient energy (Experiment 5a):** optional ``physics.kappa_x``,
+``physics.kappa_y`` (flat ``kappa_x``, ``kappa_y``) generalize the Cahn--Hilliard
+stiffness; if omitted, both default to ``physics.kappa``. Isotropic behaviour and
+bitwise numerics match the legacy scheme when ``kappa_x == kappa_y == kappa``.
+
 **Backward compatibility:** configs without ``c0_alpha`` behave like older
 checkouts (``c0_alpha`` defaults to ``0.0``). When ``uniform_supersaturation``
 is enabled and ``c0_alpha`` is zero, dissolved ``c`` is still ``c_0 * χ``
@@ -132,11 +137,15 @@ class SimParams(NamedTuple):
             ``c`` stays exactly ``c_0 * χ`` over the cavity (historical semantics); for
             ``c0_alpha != 0``, the ramp applies on the enforcement ring only while
             non-ring cavity cells remain ``c_0 * χ``.
+        kappa_x, kappa_y: Diagonal gradient coefficients (Experiment 5a). When both
+            equal ``kappa``, the IMEX stiff symbol matches the legacy isotropic scheme.
     """
 
     W: float
     gamma: float
     kappa: float
+    kappa_x: float
+    kappa_y: float
     lambda_barrier: float
     D_c: float
     k_reaction: float
@@ -181,7 +190,8 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
     Args:
         cfg: Flat dict (from nested YAML via ``flatten_nested_cfg`` or legacy
             single-level configs). Must include required keys ``W``, ``gamma``,
-            ``kappa``, transport and thermodynamic parameters.
+            ``kappa`` (legacy scalar), optional ``kappa_x``/``kappa_y`` for
+            anisotropic gradient coefficients, transport and thermodynamic parameters.
 
     Returns:
         A :class:`SimParams` instance with booleans/coercion applied. Missing
@@ -191,10 +201,15 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
     W = float(cfg["W"])
     _er = cfg.get("enable_reaction", True)
     enable_rx = float(1.0 if _er else 0.0)
+    kappa = float(cfg["kappa"])
+    kappa_x = float(cfg.get("kappa_x", kappa))
+    kappa_y = float(cfg.get("kappa_y", kappa))
     return SimParams(
         W=W,
         gamma=float(cfg["gamma"]),
-        kappa=float(cfg["kappa"]),
+        kappa=kappa,
+        kappa_x=kappa_x,
+        kappa_y=kappa_y,
         lambda_barrier=float(cfg.get("lambda_barrier", 10.0)),
         D_c=float(cfg["D_c"]),
         k_reaction=float(cfg["k_reaction"]),
@@ -268,9 +283,14 @@ def imex_step(
     pm = jnp.fft.fft2(phim)
     pc = jnp.fft.fft2(phic)
 
+    # IMEX stiff symbol for diagonal anisotropic gradient energy:
+    # matches ``kappa * k_sq²`` when ``kappa_x == kappa_y == kappa``.
+    aniso_grad_sym = prm.kappa_x * geom.kx_sq + prm.kappa_y * geom.ky_sq
+    stiff_phi = geom.k_sq * aniso_grad_sym
+
     c_hat_new = (cm - dt * jnp.fft.fft2(Gm)) / (1.0 + dt * prm.D_c * geom.k_sq)
-    denom_m = 1.0 + dt * prm.M_m * prm.kappa * geom.k_four
-    denom_c = 1.0 + dt * prm.M_c * prm.kappa * geom.k_four
+    denom_m = 1.0 + dt * prm.M_m * stiff_phi
+    denom_c = 1.0 + dt * prm.M_c * stiff_phi
     phim_hat_new = (pm + dt * jnp.fft.fft2(rhs_m)) / denom_m
     phic_hat_new = (pc + dt * jnp.fft.fft2(rhs_c)) / denom_c
 
