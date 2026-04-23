@@ -279,6 +279,7 @@ def test_mass_balance_matches_production(tmp_path: Path) -> None:
         meta=meta,
         surface_flux_budget=surface,
         path=tmp_path / "mass_balance_comparison.png",
+        cfg=scfg,
     )
     assert (tmp_path / "mass_balance_comparison.png").is_file()
 

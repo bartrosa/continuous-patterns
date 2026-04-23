@@ -12,6 +12,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from continuous_patterns.agate_ch.diagnostics import azimuthal_mean_at_radius_numpy
+from continuous_patterns.plot_captions import pyplot_save_png_with_params
 
 
 def silica_mass_disk_numpy(
@@ -205,6 +206,7 @@ def plot_mass_balance_comparison(
     meta: dict[str, Any],
     surface_flux_budget: dict[str, Any],
     path: Any,
+    cfg: dict[str, Any] | None = None,
 ) -> None:
     """Diagnostic figure for smoke / QA."""
     fig, axes = plt.subplots(2, 2, figsize=(11, 8))
@@ -283,7 +285,7 @@ def plot_mass_balance_comparison(
             color="0.35",
         )
     plt.tight_layout()
-    plt.savefig(path, dpi=150)
+    pyplot_save_png_with_params(path, cfg, dpi=150)
     plt.close(fig)
 
 

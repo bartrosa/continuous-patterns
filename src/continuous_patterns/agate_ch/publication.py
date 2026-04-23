@@ -18,6 +18,24 @@ from continuous_patterns.agate_ch.plotting import (
 )
 
 
+def _paper_fig1_caption_cfg(
+    main_sweep_dir: Path,
+    sweep_entries: list[tuple[str, Path]],
+) -> dict[str, Any]:
+    runs: dict[str, Any] = {}
+    for name, sub in sweep_entries[:6]:
+        sj = sub / "summary.json"
+        if sj.is_file():
+            runs[name] = json.loads(sj.read_text()).get("parameters")
+        else:
+            runs[name] = None
+    return {
+        "paper_figure": "fig1_comparison",
+        "main_sweep_dir": str(main_sweep_dir.resolve()),
+        "runs": runs,
+    }
+
+
 def _gamma_scan_results_table_md(gamma_dir: Path | None) -> str:
     """Markdown table from ``gamma_sweep_dir/*/summary.json``."""
     if gamma_dir is None or not gamma_dir.is_dir():
@@ -194,7 +212,11 @@ def generate_paper_figures(
                 sweep_entries.append((sub.name, sub))
         sweep_entries.sort(key=lambda x: x[0])
         if len(sweep_entries) >= 6:
-            plot_paper_main_sweep_row(sweep_entries[:6], paper / "fig1_comparison.png")
+            plot_paper_main_sweep_row(
+                sweep_entries[:6],
+                paper / "fig1_comparison.png",
+                cfg=_paper_fig1_caption_cfg(main_sweep_dir, sweep_entries[:6]),
+            )
 
     mp_dir = (main_sweep_dir / "medium_pinning") if main_sweep_dir is not None else None
     if mp_dir is not None and (mp_dir / "snapshots.h5").is_file():
@@ -208,6 +230,9 @@ def generate_paper_figures(
         L = float(prm.get("L", 200))
         R = float(prm.get("R", 80))
         ac = float(summ.get("moganite_chalcedony_anticorrelation", -0.94))
+        fig2_cfg = dict(prm)
+        fig2_cfg["paper_figure"] = "fig2_canonical_slice"
+        fig2_cfg["source_run_dir"] = str(mp_dir.resolve())
         plot_paper_canonical_antiphase_slice(
             pm,
             pc,
@@ -215,6 +240,7 @@ def generate_paper_figures(
             R=R,
             path=paper / "fig2_canonical_slice.png",
             rho_title=ac,
+            cfg=fig2_cfg,
         )
         try:
             from continuous_patterns.agate_ch.run import load_snapshots_h5
@@ -269,15 +295,29 @@ def generate_paper_figures(
             run_gamma.append((sub.name, sub, g))
     run_gamma.sort(key=lambda t: t[2])
     run_gamma_paths = [(a, b) for a, b, _ in run_gamma]
+    gamma_pub_cfg: dict[str, Any] = {
+        "paper_bundle": "generate_paper_figures",
+        "gamma_sweep_dir": str(gamma_sweep_dir.resolve()),
+        "runs_gamma_ordered": [name for name, _, _ in run_gamma],
+        "runs_parameters": {
+            name: json.loads((path / "summary.json").read_text()).get("parameters")
+            for name, path, _ in run_gamma
+            if (path / "summary.json").is_file()
+        },
+    }
     if rows_c:
         plot_gamma_phase_diagram(
             rows_c,
             gamma_sweep_dir / "gamma_phase_diagram.png",
             gamma_sweep_dir / "gamma_phase_diagram.csv",
+            cfg=gamma_pub_cfg,
         )
     if rows_c and run_gamma_paths:
         compose_gamma_scan_publication_figure(
-            rows_c, run_gamma_paths, paper / "fig3_gamma_scan.png"
+            rows_c,
+            run_gamma_paths,
+            paper / "fig3_gamma_scan.png",
+            cfg=gamma_pub_cfg,
         )
         gpub = gamma_sweep_dir / "paper_figures"
         gpub.mkdir(parents=True, exist_ok=True)

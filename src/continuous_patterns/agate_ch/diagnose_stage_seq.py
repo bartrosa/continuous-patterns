@@ -28,6 +28,8 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
+from continuous_patterns.plot_captions import figure_save_png_with_params
+
 try:
     import h5py
 except ImportError as exc:
@@ -409,7 +411,16 @@ def run_diagnosis(
 
     fig.suptitle("Stage sequence diagnosis (rows: A final, B init, B final, diff)", fontsize=12)
     fig.tight_layout()
-    fig.savefig(png_path, dpi=150, bbox_inches="tight")
+    summ_a_path = run_a_dir / "summary.json"
+    prm_a = json.loads(summ_a_path.read_text()).get("parameters") if summ_a_path.is_file() else None
+    diag_fig_cfg: dict[str, Any] = {
+        "diagnostic": "stage_seq_diagnosis",
+        "run_a_dir": str(run_a_dir.resolve()),
+        "run_b_dir": str(run_b_dir.resolve()),
+        "run_a_parameters": prm_a,
+        "run_b_parameters": summ_b.get("parameters"),
+    }
+    figure_save_png_with_params(fig, png_path, diag_fig_cfg, dpi=150, bbox_inches="tight")
     plt.close(fig)
     report["checks"]["check5_figure"] = {"path": str(png_path)}
 

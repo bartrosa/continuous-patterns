@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from continuous_patterns.agate_ch.run import _repo_root, agate_ch_results_dir
+from continuous_patterns.plot_captions import figure_save_png_with_params
 
 
 def load_final_state(run_dir: Path) -> dict[str, np.ndarray]:
@@ -82,7 +83,16 @@ def plot_comparison(
     fig.suptitle("Sequential Stage I → Stage II (final fields)", fontsize=14)
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    cap: dict[str, object] = {
+        "script": "plot_stage_sequence",
+        "run_a_dir": str(run_a_dir.resolve()),
+        "run_b_dir": str(run_b_dir.resolve()),
+    }
+    for tag, rd in (("stage_I", run_a_dir), ("stage_II", run_b_dir)):
+        sj = rd / "summary.json"
+        if sj.is_file():
+            cap[f"{tag}_parameters"] = json.loads(sj.read_text()).get("parameters")
+    figure_save_png_with_params(fig, output_path, cap, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {output_path}")
 

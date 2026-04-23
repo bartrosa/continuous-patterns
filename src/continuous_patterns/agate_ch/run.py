@@ -550,11 +550,12 @@ def run_postprocess(
     _, pt_r = radial_profile(phi_tot, L=L, R=R)
     radial_metrics = band_metrics(rc, pt_r, R)
 
-    plot_fields_final(c, pm, pc, L=L, R=R, path=out_dir / "fields_final.png")
+    plot_fields_final(c, pm, pc, L=L, R=R, path=out_dir / "fields_final.png", cfg=cfg)
     plot_radial(
         rc,
         {"phi_m": pm_r, "phi_c": pc_r, "phi_m+phi_c": pt_r},
         out_dir / "radial_profile.png",
+        cfg=cfg,
     )
 
     frames = [np.asarray(a + b) for _, _, a, b in snaps_full]
@@ -567,12 +568,13 @@ def run_postprocess(
     save_h5(h5_path, snaps_full)
 
     ts = analyse_all_snapshots(h5_path, L=L, R=R, dt=dt, skip_before=500)
-    plot_band_count_evolution(ts["records"], dt, out_dir / "band_count_evolution.png")
+    plot_band_count_evolution(ts["records"], dt, out_dir / "band_count_evolution.png", cfg=cfg)
     plot_kymograph(
         ts["kymograph_t"],
         ts["kymograph_r"],
         out_dir / "kymograph.png",
         title=label,
+        cfg=cfg,
     )
 
     mp = ts["metrics_at_peak"]
@@ -592,6 +594,7 @@ def run_postprocess(
         title=peak_title,
         radial_centers=ts["peak_radial_centers"],
         radial_profile_arr=ts["peak_radial_profile"],
+        cfg=cfg,
     )
 
     final_title = f"Jabłczyński at final — {mf.get('classification', '')}"
@@ -601,6 +604,7 @@ def run_postprocess(
         title=final_title,
         radial_centers=rc,
         radial_profile_arr=pt_r,
+        cfg=cfg,
     )
 
     anticorr = moganite_chalcedony_anticorr(pm, pc, L, R)
@@ -613,10 +617,11 @@ def run_postprocess(
         n_bands=final_nb,
         classification=str(mf.get("classification", "")),
         anticorr=anticorr,
+        cfg=cfg,
     )
 
     pub_field, _pub_src = choose_pub_field(pm, pc)
-    save_final_pub(pub_field, L=L, R=R, path=out_dir / "final_pub.png")
+    save_final_pub(pub_field, L=L, R=R, path=out_dir / "final_pub.png", cfg=cfg)
 
     ovs = overshoot_fraction(pm, pc)
     surf_budget = meta.get("mass_balance_surface_flux") or {}
@@ -1014,10 +1019,18 @@ def main() -> None:
             kymos.append((cid, kt, kr))
 
         write_sweep_summaries_csv_txt(table_rows, sweep_dir)
-        plot_sweep_compare(profiles, sweep_dir / "sweep_comparison.png")
-        plot_sweep_kymographs(kymos, sweep_dir / "sweep_kymographs.png")
-        plot_comparison_grid(sweep_entries, sweep_dir / "comparison_grid.png")
-        plot_canonical_slice_grid(sweep_entries, sweep_dir / "canonical_slice_grid.png")
+        sweep_fig_cfg: dict[str, Any] = {
+            "sweep_yaml": str(sw_path.resolve()),
+            "runs": {cid: summaries[cid].get("parameters") for cid in ids_order},
+        }
+        plot_sweep_compare(profiles, sweep_dir / "sweep_comparison.png", cfg=sweep_fig_cfg)
+        plot_sweep_kymographs(kymos, sweep_dir / "sweep_kymographs.png", cfg=sweep_fig_cfg)
+        plot_comparison_grid(sweep_entries, sweep_dir / "comparison_grid.png", cfg=sweep_fig_cfg)
+        plot_canonical_slice_grid(
+            sweep_entries,
+            sweep_dir / "canonical_slice_grid.png",
+            cfg=sweep_fig_cfg,
+        )
         sweep_kind = str(sweep.get("kind", "main"))
         if sweep_kind == "gamma_scan":
             paired = [(cid, summaries[cid]) for cid in ids_order]
@@ -1049,11 +1062,13 @@ def main() -> None:
                 ordered_entries,
                 sweep_dir / "gamma_scan_fields.png",
                 titles_gamma=[rf"$\gamma={r['gamma']:.1f}$" for r in gamma_rows],
+                cfg=sweep_fig_cfg,
             )
             plot_gamma_phase_diagram(
                 gamma_rows,
                 sweep_dir / "gamma_phase_diagram.png",
                 sweep_dir / "gamma_phase_diagram.csv",
+                cfg=sweep_fig_cfg,
             )
             report_gamma_scan(
                 gamma_rows,

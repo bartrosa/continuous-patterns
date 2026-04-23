@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from continuous_patterns.agate_stage2.labyrinth_analysis import analyze_stage2_run
+from continuous_patterns.plot_captions import figure_save_png_with_params
 
 
 def _repo_root() -> Path:
@@ -125,7 +126,12 @@ def main() -> None:
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         fig_path = base / "gamma_scan_lambda_comparison.png"
-        fig.savefig(fig_path, dpi=150)
+        agg_cfg = {
+            "script": "agate_stage2.aggregate_sweep",
+            "results_base": str(base.resolve()),
+            "points": [{k: v for k, v in r.items() if k != "run_dir"} for r in rows],
+        }
+        figure_save_png_with_params(fig, fig_path, agg_cfg, dpi=150)
         plt.close(fig)
         print(f"Wrote {fig_path}")
     else:

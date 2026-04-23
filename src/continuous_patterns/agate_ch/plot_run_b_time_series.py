@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 from pathlib import Path
 
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
+
+from continuous_patterns.plot_captions import figure_save_png_with_params
 
 
 def _repo_root() -> Path:
@@ -169,7 +172,16 @@ def plot_time_series(
     )
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    summ_path = run_dir / "summary.json"
+    ts_cfg: dict[str, object] = {
+        "script": "plot_run_b_time_series",
+        "run_dir": str(run_dir.resolve()),
+        "n_panels": n_panels,
+        "dt_used": _dt,
+    }
+    if summ_path.is_file():
+        ts_cfg["parameters"] = json.loads(summ_path.read_text()).get("parameters")
+    figure_save_png_with_params(fig, output_path, ts_cfg, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {output_path}")
 
@@ -185,8 +197,6 @@ def _read_dt(run_dir: Path) -> float:
     """
     summ = run_dir / "summary.json"
     if summ.is_file():
-        import json
-
         data = json.loads(summ.read_text())
         prm = data.get("parameters") or {}
         if "dt" in prm:
