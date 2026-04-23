@@ -59,11 +59,43 @@ from continuous_patterns.agate_ch.publication import (
     write_results_markdown,
 )
 from continuous_patterns.agate_ch.solver import (
+    build_geometry_from_cfg,
     build_initial_state,
     cfg_to_sim_params,
     simulate_to_host,
     spectral_mass_conservation_diagnostic,
 )
+
+
+def cavity_phi_sum_extrema(
+    phi_m: np.ndarray, phi_c: np.ndarray, *, L: float, R: float
+) -> tuple[float, float]:
+    """Max / min of ``φ_m+φ_c`` on pixels with ``r < R`` (disk cavity)."""
+    pm = np.asarray(phi_m, dtype=np.float64)
+    pc = np.asarray(phi_c, dtype=np.float64)
+    n = pm.shape[0]
+    dx = L / n
+    xc = L / 2.0
+    xs = (np.arange(n, dtype=np.float64) + 0.5) * dx
+    xv, yv = np.meshgrid(xs, xs, indexing="ij")
+    rv = np.sqrt((xv - xc) ** 2 + (yv - xc) ** 2)
+    mask = rv < R
+    s = pm + pc
+    vals = s[mask]
+    if vals.size == 0:
+        return float("nan"), float("nan")
+    return float(np.max(vals)), float(np.min(vals))
+
+
+def stress_tensor_scalar_stats(cfg: dict[str, Any]) -> dict[str, float]:
+    """Max norm and RMS of ``σ`` components on the grid (from ``build_geometry_from_cfg``)."""
+    geom = build_geometry_from_cfg(cfg)
+    sxx = np.asarray(jax.device_get(geom.sigma_xx), dtype=np.float64)
+    syy = np.asarray(jax.device_get(geom.sigma_yy), dtype=np.float64)
+    sxy = np.asarray(jax.device_get(geom.sigma_xy), dtype=np.float64)
+    mx = float(np.max(np.abs(np.stack([sxx, syy, sxy], axis=0))))
+    rms = float(np.sqrt(np.mean(sxx**2 + syy**2 + 2.0 * sxy**2)))
+    return {"sigma_max": mx, "sigma_rms": rms}
 
 
 def _repo_root() -> Path:
@@ -558,6 +590,12 @@ def run_postprocess(
     radial_metrics = band_metrics(rc, pt_r, R)
 
     plot_fields_final(c, pm, pc, L=L, R=R, path=out_dir / "fields_final.png", cfg=cfg)
+    sm_stress = str(cfg.get("stress_mode", "none"))
+    if sm_stress != "none" and float(cfg.get("sigma_0", 0.0)) != 0.0:
+        from continuous_patterns.agate_ch.stress_viz import save_stress_mode_diagnostic
+
+        safe = sm_stress.replace("/", "_").replace(" ", "_")
+        save_stress_mode_diagnostic(cfg, out_dir / f"stress_diagnostic_{safe}.png")
     plot_radial(
         rc,
         {"phi_m": pm_r, "phi_c": pc_r, "phi_m+phi_c": pt_r},
@@ -716,6 +754,41 @@ def run_postprocess(
         "silica_full_domain_final": meta.get("silica_full_domain_final"),
         "ring_mask_sanity": meta.get("ring_mask_sanity"),
     }
+    if str(cfg.get("stress_mode", "none")) == "kirsch":
+        summary["stress_kirsch_model_note"] = (
+            "Kirsch σ is evaluated with r_eff=max(r,R); points inside the geometric cavity "
+            "use rim-equivalent stress for coupling (effective field; not a strict "
+            "traction-free void-only Kirsch restriction)."
+        )
+
+    smd = meta.get("spectral_mass_conservation") or meta.get("option_D_spectral_conservation")
+    drift_opt_d = (
+        float(smd["leak_pct"])
+        if isinstance(smd, dict) and smd.get("leak_pct") is not None
+        else float("nan")
+    )
+    mx_sum, mn_sum = cavity_phi_sum_extrema(pm, pc, L=float(L), R=float(R))
+    sig_stats = stress_tensor_scalar_stats(cfg)
+    summary["mass_conservation"] = {
+        "max_phi_sum": mx_sum,
+        "min_phi_sum": mn_sum,
+        "option_D_drift_pct": drift_opt_d,
+        "mass_broken": bool(
+            (mx_sum == mx_sum and mx_sum > 1.1) or (mn_sum == mn_sum and mn_sum < 0.9)
+        ),
+    }
+    summary["stress_coupling"] = {
+        "B": float(cfg.get("stress_coupling_B", 0.0)),
+        "sigma_0": float(cfg.get("sigma_0", 0.0)),
+        "sigma_max": sig_stats["sigma_max"],
+        "sigma_rms": sig_stats["sigma_rms"],
+    }
+    if str(cfg.get("stress_mode", "none")) == "kirsch":
+        summary["stress_coupling"]["physics_note"] = (
+            "Kirsch is formulated for traction-free hole in plate; applying σ inside the cavity "
+            "region is ill-defined — treat morphology as exploratory only."
+        )
+
     if c_mass_disk is not None:
         summary["c_mass_conservation_disk"] = c_mass_disk
 

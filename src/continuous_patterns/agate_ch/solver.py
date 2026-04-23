@@ -10,6 +10,15 @@ linear ramp ``c_0(y)`` on the **enforcement ring only** — see
 stiffness; if omitted, both default to ``physics.kappa``. Isotropic behaviour and
 bitwise numerics match the legacy scheme when ``kappa_x == kappa_y == kappa``.
 
+**Stress-coupled gradient (Experiment 6):** optional ``stress_mode``,
+``sigma_0``, ``stress_coupling_B`` add ``−∇·(σ∇ψ)`` to the chemical potentials with
+``ψ = φ_m − φ_c``: ``μ_m += ½ μ_stress``, ``μ_c −= ½ μ_stress`` where
+``μ_stress = −B ∇·(σ∇ψ)`` (see :func:`stress_contribution_to_mu`). The RHS uses
+``M ∇² μ``, hence stress enters as the Laplacian of a flux-divergence form — consistent
+with phase-field mass bookkeeping for ``ψ``.
+When ``stress_coupling_B == 0`` or σ is zero (``stress_mode: none``),
+the legacy IMEX path is unchanged.
+
 **Backward compatibility:** configs without ``c0_alpha`` behave like older
 checkouts (``c0_alpha`` defaults to ``0.0``). When ``uniform_supersaturation``
 is enabled and ``c0_alpha`` is zero, dissolved ``c`` is still ``c_0 * χ``
@@ -139,6 +148,8 @@ class SimParams(NamedTuple):
             non-ring cavity cells remain ``c_0 * χ``.
         kappa_x, kappa_y: Diagonal gradient coefficients (Experiment 5a). When both
             equal ``kappa``, the IMEX stiff symbol matches the legacy isotropic scheme.
+        stress_coupling_B: Strength ``B`` in ``F_stress`` (Experiment 6). Default ``0``
+            omits stress in μ.
     """
 
     W: float
@@ -166,6 +177,22 @@ class SimParams(NamedTuple):
     enable_reaction: float
     apply_cavity_mask: bool = True
     project_c_on_cavity: bool = True
+    stress_coupling_B: float = 0.0
+
+
+def build_geometry_from_cfg(cfg: dict[str, Any]) -> Geometry:
+    """Construct :class:`~continuous_patterns.agate_ch.model.Geometry` including stress fields."""
+    L = float(cfg["L"])
+    R = float(cfg["R"])
+    n = int(cfg["grid"])
+    return build_geometry(
+        L,
+        R,
+        n,
+        stress_mode=str(cfg.get("stress_mode", "none")),
+        sigma_0=float(cfg.get("sigma_0", 0.0)),
+        stress_eps_factor=float(cfg.get("stress_eps_factor", 3.0)),
+    )
 
 
 def _resolve_disable_dirichlet(cfg: dict[str, Any]) -> bool:
@@ -230,11 +257,54 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
         enable_reaction=enable_rx,
         apply_cavity_mask=bool(cfg.get("apply_cavity_mask", True)),
         project_c_on_cavity=bool(cfg.get("project_c_on_cavity", True)),
+        stress_coupling_B=float(cfg.get("stress_coupling_B", 0.0)),
     )
 
 
 def laplacian(u: jnp.ndarray, k_sq: jnp.ndarray) -> jnp.ndarray:
     return jnp.fft.ifft2(-k_sq * jnp.fft.fft2(u)).real
+
+
+def stress_mu_hat(phi: jnp.ndarray, geom: Geometry, B: jnp.ndarray) -> jnp.ndarray:
+    """Return ``FFT(μ_stress)`` with ``μ_stress = −B ∇·(σ∇φ)`` (periodic grid).
+
+    ``φ`` must be the scalar order parameter ``φ_m − φ_c``. For separate phase potentials,
+    use :func:`stress_contribution_to_mu`.
+    """
+    phi_hat = jnp.fft.fft2(phi)
+    kx = geom.kx_wave
+    ky = geom.ky_wave
+    dphi_dx = jnp.real(jnp.fft.ifft2(1j * kx * phi_hat))
+    dphi_dy = jnp.real(jnp.fft.ifft2(1j * ky * phi_hat))
+    fx = geom.sigma_xx * dphi_dx + geom.sigma_xy * dphi_dy
+    fy = geom.sigma_xy * dphi_dx + geom.sigma_yy * dphi_dy
+    fx_hat = jnp.fft.fft2(fx)
+    fy_hat = jnp.fft.fft2(fy)
+    div_hat = 1j * kx * fx_hat + 1j * ky * fy_hat
+    return -B * div_hat
+
+
+def stress_contribution_to_mu(
+    phi_m: jnp.ndarray,
+    phi_c: jnp.ndarray,
+    geom: Geometry,
+    B: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Physical-space stress pieces for ``μ_m``, ``μ_c`` from ``F_stress[ψ]``, ``ψ = φ_m − φ_c``.
+
+    With ``μ_stress = −B ∇·(σ∇ψ)`` (pseudospectral), variational splitting gives
+    ``δμ_m = +½ μ_stress``, ``δμ_c = −½ μ_stress`` so that
+    ``δμ_m − δμ_c = μ_stress = δF/δψ``. The CH flux ``M ∇² μ`` then applies the Laplacian
+    of these terms (divergence structure in the free energy).
+
+    Returns:
+        ``(delta_mu_m, delta_mu_c)`` in real space, same shape as ``phi_m``.
+    """
+    psi = phi_m - phi_c
+    mu_hat = stress_mu_hat(psi, geom, jnp.asarray(B, dtype=jnp.float32))
+    mu_stress = jnp.real(jnp.fft.ifft2(mu_hat))
+    half = jnp.float32(0.5)
+    return half * mu_stress, -half * mu_stress
 
 
 def imex_step(
@@ -273,8 +343,28 @@ def imex_step(
 
     fm = dfdphi_total(phim, prm.W, prm.lambda_barrier)
     fc = dfdphi_total(phic, prm.W, prm.lambda_barrier)
-    lap_mu_m = laplacian(fm + prm.gamma * phic, geom.k_sq)
-    lap_mu_c = laplacian(fc + prm.gamma * phim, geom.k_sq)
+
+    def _lap_legacy(_: Any) -> tuple[jnp.ndarray, jnp.ndarray]:
+        lm = laplacian(fm + prm.gamma * phic, geom.k_sq)
+        lc = laplacian(fc + prm.gamma * phim, geom.k_sq)
+        return lm, lc
+
+    def _lap_stress(_: Any) -> tuple[jnp.ndarray, jnp.ndarray]:
+        b32 = jnp.float32(prm.stress_coupling_B)
+        dmu_m, dmu_c = stress_contribution_to_mu(phim, phic, geom, b32)
+        mu_m = fm + prm.gamma * phic + dmu_m
+        mu_c = fc + prm.gamma * phim + dmu_c
+        return laplacian(mu_m, geom.k_sq), laplacian(mu_c, geom.k_sq)
+
+    sig_any = jnp.maximum(
+        jnp.max(jnp.abs(geom.sigma_xx)),
+        jnp.maximum(jnp.max(jnp.abs(geom.sigma_yy)), jnp.max(jnp.abs(geom.sigma_xy))),
+    )
+    use_stress = jnp.logical_and(
+        jnp.asarray(prm.stress_coupling_B, dtype=jnp.float32) > jnp.float32(0),
+        sig_any > jnp.float32(1e-12),
+    )
+    lap_mu_m, lap_mu_c = lax.cond(use_stress, _lap_stress, _lap_legacy, None)
 
     rhs_m = prm.M_m * lap_mu_m + psi_m * Gm
     rhs_c = prm.M_c * lap_mu_c + psi_c * Gm
@@ -518,13 +608,12 @@ def _integrate_flux_diagnosis(
     """Single lax.scan run with per-step influx and stdout boundary diagnostics."""
     L = float(cfg["L"])
     R = float(cfg["R"])
-    n = int(cfg["grid"])
     dt = float(cfg["dt"])
     T = float(cfg["T"])
     snap_every = int(cfg["snapshot_every"])
     seed = int(cfg.get("seed", 0))
     prm = cfg_to_sim_params(cfg)
-    geom = build_geometry(L, R, n)
+    geom = build_geometry_from_cfg(cfg)
     dx = float(geom.dx)
     key = jax.random.PRNGKey(seed)
     ring_sanity: dict[str, float] | None = None
@@ -775,7 +864,7 @@ def integrate_chunks(
     snap_every = int(cfg["snapshot_every"])
     seed = int(cfg.get("seed", 0))
     prm = cfg_to_sim_params(cfg)
-    geom = build_geometry(L, R, n)
+    geom = build_geometry_from_cfg(cfg)
     key = jax.random.PRNGKey(seed)
     ring_sanity: dict[str, float] | None = None
     if cfg.get("print_ring_mask_sanity", True):
@@ -1110,13 +1199,11 @@ def simulate_to_host(
 def simulate(cfg: dict[str, Any]) -> dict[str, Any]:
     """Short diagnostic run: periodic spectral mass series (see NOTES.md)."""
     L = float(cfg["L"])
-    R = float(cfg["R"])
-    n = int(cfg["grid"])
     dt = float(cfg["dt"])
     T = float(cfg["T"])
     snap_every = max(1, int(cfg.get("snapshot_every", 10)))
     prm = cfg_to_sim_params(cfg)
-    geom = build_geometry(L, R, n)
+    geom = build_geometry_from_cfg(cfg)
     key = jax.random.PRNGKey(int(cfg.get("seed", 0)))
     state = build_initial_state(cfg, geom, prm, key, L=L)
 

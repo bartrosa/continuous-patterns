@@ -18,6 +18,13 @@ class Geometry(NamedTuple):
     #: component wavenumber squares (``(2π kx_fftfreq)²`` etc.) for anisotropic κ.
     kx_sq: jnp.ndarray
     ky_sq: jnp.ndarray
+    #: Full angular wavenumbers ``2π k_fftfreq`` for pseudo-spectral derivatives.
+    kx_wave: jnp.ndarray
+    ky_wave: jnp.ndarray
+    #: Spatially varying Cauchy stress (Experiment 6); zeros when inactive.
+    sigma_xx: jnp.ndarray
+    sigma_yy: jnp.ndarray
+    sigma_xy: jnp.ndarray
     dx: float
     xc: float
     yc: float
@@ -32,7 +39,16 @@ def xy_grid(L: float, n: int) -> tuple[jnp.ndarray, jnp.ndarray]:
     return X, Y
 
 
-def build_geometry(L: float, R: float, n: int, eps_scale: float = 2.0) -> Geometry:
+def build_geometry(
+    L: float,
+    R: float,
+    n: int,
+    eps_scale: float = 2.0,
+    *,
+    stress_mode: str = "none",
+    sigma_0: float = 0.0,
+    stress_eps_factor: float = 3.0,
+) -> Geometry:
     dx = L / n
     xc = yc = L / 2
     X, Y = xy_grid(L, n)
@@ -50,6 +66,43 @@ def build_geometry(L: float, R: float, n: int, eps_scale: float = 2.0) -> Geomet
     k_four = k_sq**2
     kx_sq = kx**2
     ky_sq = kk**2
+
+    sigma_xx = jnp.zeros((n, n), dtype=jnp.float32)
+    sigma_yy = jnp.zeros((n, n), dtype=jnp.float32)
+    sigma_xy = jnp.zeros((n, n), dtype=jnp.float32)
+    if stress_mode == "none":
+        pass
+    elif stress_mode == "flamant_two_point":
+        if sigma_0 > 0.0:
+            from continuous_patterns.agate_ch.stress_fields import flamant_two_point
+
+            eps = stress_eps_factor * dx
+            sigma_xx, sigma_yy, sigma_xy = flamant_two_point(
+                float(L), float(R), int(n), float(sigma_0), float(eps)
+            )
+    elif stress_mode == "uniform_uniaxial":
+        if float(sigma_0) != 0.0:
+            from continuous_patterns.agate_ch.stress_fields import uniform_uniaxial_field
+
+            sigma_xx, sigma_yy, sigma_xy = uniform_uniaxial_field(float(L), int(n), float(sigma_0))
+    elif stress_mode == "pure_shear":
+        if float(sigma_0) != 0.0:
+            from continuous_patterns.agate_ch.stress_fields import pure_shear_field
+
+            sigma_xx, sigma_yy, sigma_xy = pure_shear_field(float(L), int(n), float(sigma_0))
+    elif stress_mode == "pressure_gradient":
+        if float(sigma_0) != 0.0:
+            from continuous_patterns.agate_ch.stress_fields import pressure_gradient_field
+
+            sigma_xx, sigma_yy, sigma_xy = pressure_gradient_field(float(L), int(n), float(sigma_0))
+    elif stress_mode == "kirsch":
+        if float(sigma_0) != 0.0:
+            from continuous_patterns.agate_ch.stress_fields import kirsch_field
+
+            sigma_xx, sigma_yy, sigma_xy = kirsch_field(float(L), float(R), int(n), float(sigma_0))
+    else:
+        raise ValueError(f"unknown stress_mode: {stress_mode!r}")
+
     return Geometry(
         chi=chi,
         ring=ring,
@@ -59,6 +112,11 @@ def build_geometry(L: float, R: float, n: int, eps_scale: float = 2.0) -> Geomet
         k_four=k_four,
         kx_sq=kx_sq,
         ky_sq=ky_sq,
+        kx_wave=kx,
+        ky_wave=kk,
+        sigma_xx=sigma_xx,
+        sigma_yy=sigma_yy,
+        sigma_xy=sigma_xy,
         dx=dx,
         xc=xc,
         yc=yc,
