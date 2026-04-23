@@ -128,10 +128,32 @@ The printed **mass balance** line reports **Option B** (`mass_balance_surface_fl
 
 See **`NOTES.md`** for methodology detail. Run outputs are **gitignored** by default; **`results/example/`** is a schema checklist; **`results/agate_ch/README.md`** describes where Agate CH writes sweeps.
 
-## Layout
+## Repository layout (conventions)
 
-- `src/continuous_patterns/` — package code (add sibling packages for new experiments)
-- `configs/<experiment>/` — YAML per domain (e.g. **`configs/agate_ch/`** for Agate CH)
-- `tests/<experiment>/` — pytest mirroring package layout
-- `results/<experiment>/` — default output roots (gitignored except README placeholders)
-- `uv.lock` — lockfile (commit it for reproducible installs)
+These rules keep configs, tests, and simulation outputs predictable:
+
+| Location | Purpose |
+|----------|---------|
+| **`configs/<experiment>/`** | All experiment / solver YAML. Group by package name (`agate_ch`, `agate_stage2`, …). Scenario subfolders are OK (e.g. **`configs/agate_ch/stage_sequence/`** for sequential Stage I→II and long Run B). Nothing under `src/`. See **`configs/README.md`**. |
+| **`tests/`** | All **`pytest`** modules (`testpaths` in `pyproject.toml`). Flat files (`test_agate_ch_*.py`) or nested **`tests/<package>/`** for clarity. See **`tests/README.md`**. |
+| **`results/<experiment>/`** | Default roots for HDF5, PNG, summaries (large trees **gitignored**; only **`README.md`** stubs are tracked). See **`results/agate_ch/README.md`**, **`results/agate_stage2/README.md`**. |
+
+Repo-root YAML used **only for tooling** (e.g. **`.pre-commit-config.yaml`**) is not an experiment config.
+
+Other top-level paths:
+
+- **`src/continuous_patterns/`** — Python packages (`agate_ch`, `agate_stage2`, …).
+- **`uv.lock`** — lockfile (commit for reproducible installs).
+
+### Experiment 2 helpers (configs + CLI)
+
+Long Run B (**T=100000**) uses **`configs/agate_ch/stage_sequence/run_b_long.yaml`**. Launch:
+
+```bash
+uv run python -m continuous_patterns.agate_ch.run_b_long
+# or:
+uv run python -m continuous_patterns.agate_ch.run \
+  --config configs/agate_ch/stage_sequence/run_b_long.yaml --out-dir results/agate_ch/my_long_run
+```
+
+Sequential Stage I→II: **`python -m continuous_patterns.agate_ch.run_sequence`**. Read-only Run A vs Run B check: **`python -m continuous_patterns.agate_ch.diagnose_stage_seq`** (writes under **`results/agate_ch/stage_seq_diagnosis.*`**).

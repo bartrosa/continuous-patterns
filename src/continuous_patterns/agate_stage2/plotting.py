@@ -15,13 +15,8 @@ from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from scipy.ndimage import zoom
 
-from continuous_patterns.agate_ch.diagnostics import horizontal_centerline
-from continuous_patterns.agate_ch.model import build_geometry
-from continuous_patterns.plot_captions import (
-    figure_save_png_with_params,
-    format_run_parameters_caption,
-    pyplot_save_png_with_params,
-)
+from continuous_patterns.agate_stage2.diagnostics import horizontal_centerline
+from continuous_patterns.agate_stage2.model import build_geometry
 
 _ANTIPHASE_CMAP = "RdBu_r"
 
@@ -85,11 +80,8 @@ def save_final_pub(
     cmap: str = "cividis",
     vmin: float | None = None,
     vmax: float | None = None,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     """Single-panel field image: cropped cavity + margin, colormap, no decorations."""
-    from matplotlib.gridspec import GridSpec
-
     n = field.shape[0]
     geom = build_geometry(L, R, n)
     chi = np.asarray(jnp.asarray(geom.chi))
@@ -105,39 +97,6 @@ def save_final_pub(
     scale = min_px / max(h0, w0, 1)
     zh = zoom(z, scale, order=1)
     dpi = min_px / max(zh.shape[0], 1)
-    if cfg:
-        fig_h_in = zh.shape[0] / dpi + 0.55
-        fig_w_in = zh.shape[1] / dpi
-        fig = plt.figure(figsize=(fig_w_in, fig_h_in), dpi=dpi)
-        gs = GridSpec(2, 1, figure=fig, height_ratios=[1.0, 0.38], hspace=0.15)
-        ax = fig.add_subplot(gs[0])
-        ax.imshow(
-            zh.T,
-            origin="lower",
-            cmap=cmap,
-            vmin=vmin,
-            vmax=vmax,
-            interpolation="bilinear",
-            aspect="equal",
-        )
-        ax.axis("off")
-        ax2 = fig.add_subplot(gs[1])
-        ax2.axis("off")
-        cap = format_run_parameters_caption(cfg)
-        ax2.text(
-            0.5,
-            1.0,
-            cap,
-            transform=ax2.transAxes,
-            ha="center",
-            va="top",
-            fontsize=3.8,
-            family="monospace",
-        )
-        fig.savefig(path, dpi=dpi, bbox_inches="tight", pad_inches=0.06)
-        plt.close(fig)
-        return
-
     fig = plt.figure(figsize=(zh.shape[1] / dpi, zh.shape[0] / dpi), dpi=dpi)
     ax = fig.add_axes((0.0, 0.0, 1.0, 1.0))
     ax.imshow(
@@ -160,7 +119,6 @@ def plot_comparison_grid(
     *,
     cmap: str = "cividis",
     min_px: int = 400,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     """One row: final (phi_m+phi_c) cropped, high-res thumbnails, labels below."""
     import h5py
@@ -200,15 +158,13 @@ def plot_comparison_grid(
         ax.axis("off")
         ax.set_title(cid, fontsize=9, pad=6)
     plt.subplots_adjust(bottom=0.08, top=0.92, left=0.02, right=0.98)
-    pyplot_save_png_with_params(path, cfg, dpi=220, bbox_inches="tight")
+    plt.savefig(path, dpi=220, bbox_inches="tight")
     plt.close()
 
 
 def plot_canonical_slice_grid(
     run_dirs: list[tuple[str, Path]],
     path: Path,
-    *,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     """2×3 grid of canonical slices with titles."""
     import h5py
@@ -257,7 +213,7 @@ def plot_canonical_slice_grid(
         i, j = divmod(idx, ncols)
         axes[i, j].axis("off")
     plt.tight_layout()
-    figure_save_png_with_params(fig, path, cfg, dpi=160)
+    plt.savefig(path, dpi=160)
     plt.close(fig)
 
 
@@ -323,7 +279,6 @@ def plot_fields_final(
     L: float,
     R: float,
     path: Path,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     n = c.shape[0]
     geom = build_geometry(L, R, n)
@@ -347,7 +302,7 @@ def plot_fields_final(
         ax.set_title(tit)
         plt.colorbar(im, ax=ax, fraction=0.046)
     plt.tight_layout()
-    pyplot_save_png_with_params(path, cfg, dpi=160)
+    plt.savefig(path, dpi=160)
     plt.close()
 
 
@@ -357,7 +312,6 @@ def plot_radial(
     path: Path,
     *,
     title: str = "",
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     plt.figure(figsize=(7, 5))
     for lab, yy in curves.items():
@@ -368,7 +322,7 @@ def plot_radial(
         plt.title(title)
     plt.legend()
     plt.tight_layout()
-    pyplot_save_png_with_params(path, cfg, dpi=140)
+    plt.savefig(path, dpi=140)
     plt.close()
 
 
@@ -379,7 +333,6 @@ def plot_jablczynski(
     title: str,
     radial_centers: np.ndarray | None = None,
     radial_profile_arr: np.ndarray | None = None,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     nb = int(metrics.get("N_b", 0))
     klass = metrics.get("classification", "")
@@ -404,7 +357,7 @@ def plot_jablczynski(
             bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.9},
         )
         plt.tight_layout()
-        pyplot_save_png_with_params(path, cfg, dpi=140)
+        plt.savefig(path, dpi=140)
         plt.close()
         return
 
@@ -420,7 +373,7 @@ def plot_jablczynski(
         plt.axis("off")
         plt.title(title)
         plt.tight_layout()
-        pyplot_save_png_with_params(path, cfg, dpi=140)
+        plt.savefig(path, dpi=140)
         plt.close()
         return
 
@@ -439,7 +392,7 @@ def plot_jablczynski(
         axes[2].set_ylabel(r"$d_n$")
     fig.suptitle(title)
     plt.tight_layout()
-    figure_save_png_with_params(fig, path, cfg, dpi=140)
+    plt.savefig(path, dpi=140)
     plt.close()
 
 
@@ -447,13 +400,11 @@ def plot_band_count_evolution(
     records: list[tuple[int, int, list[float]]],
     dt: float,
     path: Path,
-    *,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     if not records:
         plt.figure(figsize=(6, 3))
         plt.text(0.5, 0.5, "no snapshots", ha="center")
-        pyplot_save_png_with_params(path, cfg, dpi=120)
+        plt.savefig(path, dpi=120)
         plt.close()
         return
     steps = [r[0] for r in records]
@@ -467,7 +418,7 @@ def plot_band_count_evolution(
     plt.ylabel(r"$N_{\mathrm{peaks}}$")
     plt.title("Band count evolution")
     plt.tight_layout()
-    pyplot_save_png_with_params(path, cfg, dpi=140)
+    plt.savefig(path, dpi=140)
     plt.close()
 
 
@@ -477,7 +428,6 @@ def plot_kymograph(
     path: Path,
     *,
     title: str = "",
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     plt.figure(figsize=(7, 5))
     if t and r:
@@ -487,7 +437,7 @@ def plot_kymograph(
     if title:
         plt.title(title)
     plt.tight_layout()
-    pyplot_save_png_with_params(path, cfg, dpi=140)
+    plt.savefig(path, dpi=140)
     plt.close()
 
 
@@ -501,7 +451,6 @@ def plot_canonical_slice(
     n_bands: int,
     classification: str,
     anticorr: float,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     xm, vm = horizontal_centerline(phi_m, L, R)
     xc, vc = horizontal_centerline(phi_c, L, R)
@@ -518,15 +467,13 @@ def plot_canonical_slice(
     plt.title(ttl, fontsize=11)
     plt.legend(loc="upper right")
     plt.tight_layout()
-    pyplot_save_png_with_params(path, cfg, dpi=160)
+    plt.savefig(path, dpi=160)
     plt.close()
 
 
 def plot_sweep_fields_and_slices(
     run_dirs: list[tuple[str, Path]],
     path: Path,
-    *,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     """Row 1: moganite (φ_m) final field. Row 2: canonical horizontal slice."""
     import h5py
@@ -578,15 +525,13 @@ def plot_sweep_fields_and_slices(
         ax1.set_title(subt, fontsize=9)
     fig.suptitle("Sweep comparison — fields and canonical slices", fontsize=12, y=1.01)
     plt.tight_layout()
-    figure_save_png_with_params(fig, path, cfg, dpi=150, bbox_inches="tight")
+    plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
 
 
 def plot_sweep_compare(
     profiles: list[tuple[str, np.ndarray, np.ndarray]],
     path: Path,
-    *,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     plt.figure(figsize=(9, 6))
     for lab, centers, yy in profiles:
@@ -595,15 +540,13 @@ def plot_sweep_compare(
     plt.ylabel(r"$\phi_m+\phi_c$ (mean)")
     plt.legend()
     plt.tight_layout()
-    pyplot_save_png_with_params(path, cfg, dpi=140)
+    plt.savefig(path, dpi=140)
     plt.close()
 
 
 def plot_sweep_kymographs(
     items: list[tuple[str, list[float], list[float]]],
     path: Path,
-    *,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     n = len(items)
     if n == 0:
@@ -618,7 +561,7 @@ def plot_sweep_kymographs(
     axes_list[0].set_ylabel(r"peak $r$")
     plt.suptitle("Kymographs — sweep comparison")
     plt.tight_layout()
-    pyplot_save_png_with_params(path, cfg, dpi=140)
+    plt.savefig(path, dpi=140)
     plt.close(fig)
 
 
@@ -628,7 +571,6 @@ def plot_gamma_scan_fields(
     *,
     cmap: str = "cividis",
     titles_gamma: list[str] | None = None,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     """Single row: (phi_m+phi_c) final, cavity crop."""
     import h5py
@@ -669,7 +611,7 @@ def plot_gamma_scan_fields(
         ax.axis("off")
         ax.set_title(ttl, fontsize=10)
     plt.tight_layout()
-    figure_save_png_with_params(fig, path, cfg, dpi=200, bbox_inches="tight")
+    plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -677,8 +619,6 @@ def plot_gamma_phase_diagram(
     rows: list[dict[str, Any]],
     path_png: Path,
     path_csv: Path,
-    *,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     """Panels A (CV_q vs γ) and B (N_bands vs γ); writes CSV."""
     import csv
@@ -742,7 +682,7 @@ def plot_gamma_phase_diagram(
     axb.set_title("B: Band count vs immiscibility")
     plt.suptitle(r"$\gamma$ scan — phase diagram", fontsize=12)
     plt.tight_layout()
-    figure_save_png_with_params(fig, path_png, cfg, dpi=180)
+    plt.savefig(path_png, dpi=180)
     plt.close(fig)
 
 
@@ -750,8 +690,6 @@ def compose_gamma_scan_publication_figure(
     gamma_rows_phase: list[dict[str, Any]],
     run_dirs_ordered: list[tuple[str, Path]],
     path: Path,
-    *,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     """Top: seven cavity fields; bottom: phase diagram (embedded)."""
     import h5py
@@ -808,15 +746,13 @@ def compose_gamma_scan_publication_figure(
     axb.set_ylabel(r"$N_{\mathrm{bands}}$")
     axb.set_title("B")
     plt.suptitle(r"$\gamma$ scan — fields and phase diagram", fontsize=13)
-    figure_save_png_with_params(fig, path, cfg, dpi=220, bbox_inches="tight")
+    plt.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_paper_main_sweep_row(
     run_dirs: list[tuple[str, Path]],
     path: Path,
-    *,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     """Six panels, 300 DPI, ~800 px per panel width for publication."""
     import h5py
@@ -858,14 +794,7 @@ def plot_paper_main_sweep_row(
         ax.axis("off")
         ax.set_title(cid, fontsize=10, pad=4)
     plt.subplots_adjust(left=0.01, right=0.99, top=0.92, bottom=0.08, wspace=0.05)
-    figure_save_png_with_params(
-        fig,
-        path,
-        cfg,
-        dpi=300,
-        bbox_inches="tight",
-        pad_inches=0.02,
-    )
+    plt.savefig(path, dpi=300, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
 
 
@@ -877,7 +806,6 @@ def plot_paper_canonical_antiphase_slice(
     R: float,
     path: Path,
     rho_title: float,
-    cfg: dict[str, Any] | None = None,
 ) -> None:
     xm, vm = horizontal_centerline(phi_m, L, R)
     _, vc = horizontal_centerline(phi_c, L, R)
@@ -893,7 +821,7 @@ def plot_paper_canonical_antiphase_slice(
     )
     ax.legend(loc="upper right")
     plt.tight_layout()
-    figure_save_png_with_params(fig, path, cfg, dpi=220)
+    plt.savefig(path, dpi=220)
     plt.close(fig)
 
 

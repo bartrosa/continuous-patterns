@@ -190,6 +190,9 @@ results/*
 !results/example/**
 results/agate_ch/
 !results/agate_ch/README.md
+results/agate_stage2/
+!results/agate_stage2/README.md
+papers/*
 
 # Ruff stuff:
 .ruff_cache/

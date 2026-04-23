@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from functools import partial
-from pathlib import Path
 from typing import Any, NamedTuple
 
 import jax
@@ -13,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import lax
 
-from continuous_patterns.agate_ch.diagnostics import (
+from continuous_patterns.agate_stage2.diagnostics import (
     azimuthal_mean_at_radius_numpy,
     compute_influx_rate_physical,
     compute_influx_rate_physical_jnp,
@@ -22,8 +21,8 @@ from continuous_patterns.agate_ch.diagnostics import (
     radial_shell_widths_from_dx,
     silica_mass_inside_disk_numpy,
 )
-from continuous_patterns.agate_ch.mass_balance import dissolved_mass_disk_numpy
-from continuous_patterns.agate_ch.model import (
+from continuous_patterns.agate_stage2.mass_balance import dissolved_mass_disk_numpy
+from continuous_patterns.agate_stage2.model import (
     Geometry,
     build_geometry,
     dfdphi_total,
@@ -84,22 +83,6 @@ def print_ring_mask_sanity(
 
 
 class SimParams(NamedTuple):
-    """Immutable numerical and flag bundle for one agate_ch simulation.
-
-    Built from flattened YAML via :func:`cfg_to_sim_params`. Fields include
-    Cahn–Hilliard and silica-transport parameters, Dirichlet/reaction toggles,
-    and geometry-related projection flags:
-
-    Attributes:
-        apply_cavity_mask: If True, after each IMEX step multiply ``phi_*`` (and
-            optionally ``c``) by the smoothed cavity indicator ``chi`` so
-            crystalline phases vanish outside the agate cavity.
-        project_c_on_cavity: If True, dissolved silica ``c`` is also multiplied by
-            ``chi`` each step. If False, only phase fields are projected; use when
-            ``disable_dirichlet`` is True to avoid spurious leakage of ``c`` from
-            repeated ``chi<1`` attenuation at the rim.
-    """
-
     W: float
     gamma: float
     kappa: float
@@ -120,37 +103,18 @@ class SimParams(NamedTuple):
     rho_c: float
     disable_dirichlet: bool
     enable_reaction: float
-    apply_cavity_mask: bool = True
-    project_c_on_cavity: bool = True
 
 
 def _resolve_disable_dirichlet(cfg: dict[str, Any]) -> bool:
-    """Return whether Dirichlet rim forcing is disabled for dissolved silica.
-
-    Args:
-        cfg: Flat solver configuration dict.
-
-    Returns:
-        True if Dirichlet boundary treatment is off; False if rim/ring ``c``
-        enforcement is active. Prefers explicit ``enable_dirichlet`` when
-        present, else legacy ``disable_dirichlet`` (default: Dirichlet on).
-    """
+    """Absent ``enable_dirichlet`` → Dirichlet on (agate_ch-compatible)."""
     if "enable_dirichlet" in cfg:
         return not bool(cfg["enable_dirichlet"])
-    return bool(cfg.get("disable_dirichlet", False))
+    if "disable_dirichlet" in cfg:
+        return bool(cfg["disable_dirichlet"])
+    return False
 
 
 def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
-    """Map a flat agate_ch config dict to :class:`SimParams`.
-
-    Args:
-        cfg: Flat dict (from nested YAML via ``flatten_nested_cfg`` or legacy
-            single-level configs). Must include required keys ``W``, ``gamma``,
-            ``kappa``, transport and thermodynamic parameters.
-
-    Returns:
-        A :class:`SimParams` instance with booleans/coercion applied.
-    """
     W = float(cfg["W"])
     _er = cfg.get("enable_reaction", True)
     enable_rx = float(1.0 if _er else 0.0)
@@ -175,8 +139,6 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
         rho_c=float(cfg.get("rho_c", 1.0)),
         disable_dirichlet=_resolve_disable_dirichlet(cfg),
         enable_reaction=enable_rx,
-        apply_cavity_mask=bool(cfg.get("apply_cavity_mask", True)),
-        project_c_on_cavity=bool(cfg.get("project_c_on_cavity", True)),
     )
 
 
@@ -234,14 +196,11 @@ def imex_step(
     phim_new = jnp.clip(jnp.fft.ifft2(phim_hat_new).real, -0.05, 1.05)
     phic_new = jnp.clip(jnp.fft.ifft2(phic_hat_new).real, -0.05, 1.05)
 
-    # Crystalline phases φ live only in the cavity (χ); dissolved c may span the domain if
-    # ``project_c_on_cavity`` is False (avoid tanh-χ attenuating c each step without Dirichlet).
-    if prm.apply_cavity_mask:
+    if not prm.disable_dirichlet:
         chi = geom.chi
+        c_new = c_new * chi
         phim_new = phim_new * chi
         phic_new = phic_new * chi
-        if prm.project_c_on_cavity:
-            c_new = c_new * chi
 
     dx_sq = dx * dx
 
@@ -325,45 +284,24 @@ def initial_state_blob(
     return c, phim, phic
 
 
-def initial_state_from_snapshot(
+def initial_state_homogeneous(
     geom: Geometry,
-    snapshot_path: str | Path,
     *,
-    verify_compatible: bool = True,
-    expected_L: float | None = None,
-    expected_n: int | None = None,
+    phi_m0: float = 0.5,
+    phi_c0: float = 0.5,
+    c0: float = 0.2,
+    noise_amplitude: float = 0.01,
+    seed: int = 42,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Load ``phi_m``, ``phi_c``, ``c`` from ``final_state.npz`` (or compatible)."""
-    path = Path(snapshot_path).expanduser().resolve()
-    data = np.load(path, allow_pickle=False)
-    phi_m_np = np.asarray(data["phi_m"])
-    phi_c_np = np.asarray(data["phi_c"])
-    c_np = np.asarray(data["c"])
-    n = int(geom.chi.shape[0])
-    if verify_compatible:
-        for name, arr in ("phi_m", phi_m_np), ("phi_c", phi_c_np), ("c", c_np):
-            if arr.shape != (n, n):
-                raise ValueError(
-                    f"snapshot field {name} shape {arr.shape} != {(n, n)} for current geometry"
-                )
-        if expected_n is not None and expected_n != n:
-            raise ValueError(f"cfg grid {expected_n} != geometry grid {n}")
-        meta_path = path.with_name("final_state_meta.json")
-        if meta_path.is_file() and expected_L is not None:
-            import json as _json
-
-            meta = _json.loads(meta_path.read_text())
-            mg = int(meta.get("grid", n))
-            if mg != n:
-                raise ValueError(f"snapshot meta grid {mg} != current {n}")
-            mL = float(meta.get("L", expected_L))
-            if abs(mL - float(expected_L)) > 1e-4 * max(abs(mL), 1.0):
-                raise ValueError(f"snapshot meta L={mL} incompatible with cfg L={expected_L}")
-
-    c_j = jnp.asarray(c_np, dtype=jnp.float32)
-    pm_j = jnp.asarray(phi_m_np, dtype=jnp.float32)
-    pc_j = jnp.asarray(phi_c_np, dtype=jnp.float32)
-    return c_j, pm_j, pc_j
+    """Homogeneous initial state for Stage II experiments."""
+    n = geom.chi.shape[0]
+    rng = np.random.default_rng(seed)
+    noise_m = rng.normal(0.0, noise_amplitude, (n, n))
+    noise_c = rng.normal(0.0, noise_amplitude, (n, n))
+    phi_m_init = jnp.asarray(phi_m0 + noise_m, dtype=jnp.float32)
+    phi_c_init = jnp.asarray(phi_c0 + noise_c, dtype=jnp.float32)
+    c_init = jnp.full((n, n), c0, dtype=jnp.float32)
+    return c_init, phi_m_init, phi_c_init
 
 
 def build_initial_state(
@@ -374,18 +312,16 @@ def build_initial_state(
     *,
     L: float,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Dispatch IC: ``from_snapshot``, ``blob``, or standard cavity-like noise."""
+    """Same IC dispatch as ``integrate_chunks`` / ``simulate``."""
     ic_mode = str(cfg.get("initial_condition", "default"))
-    if ic_mode == "from_snapshot":
-        snap = cfg.get("snapshot_path") or cfg.get("initial_snapshot_path")
-        if not snap:
-            raise ValueError("initial_condition from_snapshot requires snapshot_path")
-        return initial_state_from_snapshot(
+    if ic_mode == "homogeneous":
+        return initial_state_homogeneous(
             geom,
-            str(snap),
-            verify_compatible=True,
-            expected_L=L,
-            expected_n=int(cfg["grid"]),
+            phi_m0=float(cfg.get("phi_m0", 0.5)),
+            phi_c0=float(cfg.get("phi_c0", 0.5)),
+            c0=float(cfg.get("ic_c0", prm.c_0)),
+            noise_amplitude=float(cfg.get("noise_amplitude", cfg.get("ic_noise_amplitude", 0.01))),
+            seed=int(cfg.get("seed", 42)),
         )
     if ic_mode == "blob":
         return initial_state_blob(
@@ -397,7 +333,6 @@ def build_initial_state(
             blob_y_frac=float(cfg.get("blob_y_frac", 0.6)),
             sigma=float(cfg.get("blob_sigma", 10.0)),
         )
-    # "cavity", "default", etc.
     return initial_state(
         geom,
         key,
@@ -456,7 +391,7 @@ def _integrate_flux_diagnosis(
     dx = float(geom.dx)
     key = jax.random.PRNGKey(seed)
     ring_sanity: dict[str, float] | None = None
-    if cfg.get("print_ring_mask_sanity", True):
+    if cfg.get("print_ring_mask_sanity", True) and not _resolve_disable_dirichlet(cfg):
         ring_sanity = print_ring_mask_sanity(geom, L=L, R=R)
     state0 = build_initial_state(cfg, geom, prm, key, L=L)
 
@@ -706,7 +641,7 @@ def integrate_chunks(
     geom = build_geometry(L, R, n)
     key = jax.random.PRNGKey(seed)
     ring_sanity: dict[str, float] | None = None
-    if cfg.get("print_ring_mask_sanity", True):
+    if cfg.get("print_ring_mask_sanity", True) and not _resolve_disable_dirichlet(cfg):
         ring_sanity = print_ring_mask_sanity(geom, L=L, R=R)
     state = build_initial_state(cfg, geom, prm, key, L=L)
     ic_state = state
@@ -747,10 +682,13 @@ def integrate_chunks(
     milestones = [1000, 10000, 100000] if cfg.get("diagnose_overshoot", False) else []
     mi = 0
 
+    mb_mode = str(cfg.get("mass_balance_mode", ""))
     if cfg.get("flux_sample_dt") is not None:
         flux_sample_dt = float(cfg["flux_sample_dt"])
     elif cfg.get("flux_sample_every") is not None:
         flux_sample_dt = float(cfg["flux_sample_every"]) * dt
+    elif mb_mode == "spectral_only":
+        flux_sample_dt = 0.0
     else:
         flux_sample_dt = 2.0
 
@@ -853,7 +791,7 @@ def integrate_chunks(
             bar = tqdm(
                 total=n_steps,
                 unit="step",
-                desc="agate-ch",
+                desc="agate-stage2",
                 file=sys.stderr,
                 mininterval=0.3,
             )
@@ -1090,7 +1028,17 @@ def spectral_mass_conservation_diagnostic(cfg: dict[str, Any]) -> dict[str, Any]
     try:
         dcfg = dict(cfg)
         dcfg["disable_dirichlet"] = True
-        dcfg["initial_condition"] = "blob"
+        spec_ic = cfg.get("spectral_mass_ic")
+        if spec_ic is not None:
+            dcfg["initial_condition"] = str(spec_ic)
+        elif str(cfg.get("initial_condition", "")) in (
+            "homogeneous",
+            "blob",
+            "cavity",
+        ):
+            dcfg["initial_condition"] = cfg["initial_condition"]
+        else:
+            dcfg["initial_condition"] = "blob"
         dcfg["T"] = float(cfg.get("spectral_mass_T", cfg.get("option_D_T", 1.0)))
         dcfg["dt"] = float(cfg.get("spectral_mass_dt", cfg.get("option_D_dt", cfg.get("dt", 0.01))))
         dcfg["snapshot_every"] = max(

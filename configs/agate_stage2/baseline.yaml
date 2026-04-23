@@ -1,0 +1,55 @@
+# agate_stage2 baseline — pure Stage II Cahn–Hilliard relaxation
+# No Dirichlet, no reaction, homogeneous IC
+
+experiment:
+  name: stage2_baseline_gamma5
+  seed: 42
+
+grid:
+  n: 512
+  L: 200.0
+
+physics:
+  # Geometry kept for code compatibility but cavity mask is disabled in model.build_geometry
+  R: 80.0
+  # Double-well
+  W: 1.0
+  kappa: 0.5
+  lambda_barrier: 10.0
+  # Immiscibility — the key parameter
+  gamma: 5.0
+  # Mobilities (same scale as medium_pinning in agate_ch)
+  M_m: 0.01
+  M_c: 1.0
+  # Diffusion (code path consistency; diffusion-only c-update when reaction off)
+  D_c: 1.0
+  # Reaction — disabled
+  enable_reaction: false
+  k_reaction: 0.0
+  c_sat: 0.2
+  c_0: 0.2        # Matches homogeneous silica at t=0 via ic_c0 / ic block
+  # Ostwald selector (only matters if reaction is re-enabled)
+  c_ostwald: 0.5
+  w_ostwald: 0.1
+  phi_m_ratchet_low: 0.3
+  phi_m_ratchet_high: 0.5
+  use_ratchet: true
+  # Dirichlet — disabled
+  enable_dirichlet: false
+
+initial_condition:
+  type: homogeneous
+  phi_m0: 0.5
+  phi_c0: 0.5
+  c0: 0.2
+  noise_amplitude: 0.01
+
+time:
+  dt: 0.01
+  T_total: 10000.0
+  snapshot_every: 500
+
+diagnostics:
+  mass_balance_mode: "spectral_only"
+  flux_sample_dt: null
+  progress_stderr: true

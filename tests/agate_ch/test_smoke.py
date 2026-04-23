@@ -207,8 +207,7 @@ def test_flux_closure_ring_vs_bulk() -> None:
     _, _, _, meta = integrate_chunks(cfg, chunk_size=2000, on_snapshot=None)
     ratio = float(meta["flux_closure_ratio_dense"])
     assert 4.0 < ratio < 9.0, (
-        f"unexpected flux closure ratio={ratio:.4f} "
-        "(expected rough band for R-3/R-5 FD)"
+        f"unexpected flux closure ratio={ratio:.4f} (expected rough band for R-3/R-5 FD)"
     )
 
 
@@ -280,6 +279,7 @@ def test_mass_balance_matches_production(tmp_path: Path) -> None:
         meta=meta,
         surface_flux_budget=surface,
         path=tmp_path / "mass_balance_comparison.png",
+        cfg=scfg,
     )
     assert (tmp_path / "mass_balance_comparison.png").is_file()
 
