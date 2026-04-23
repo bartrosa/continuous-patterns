@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
-"""Read-only diagnosis for Stage I→II sequence runs (no solver changes).
+"""Read-only diagnostics for Experiment 2 Stage I → Stage II (Run A vs Run B).
 
-Writes:
-  results/agate_ch/stage_seq_diagnosis.json
-  results/agate_ch/stage_seq_diagnosis.png
-  results/agate_ch/stage_seq_diagnosis_report.md
+Compares Run A ``final_state.npz`` to Run B's first HDF5 snapshot, analyzes
+inside/outside-disk statistics, renders a four-row diagnostic figure, embeds
+Solver/runner code excerpts, and writes a preliminary hypothesis (IC mismatch vs
+cavity-mask dynamics). Does **not** modify the solver or re-run simulations.
+
+Outputs (under ``results/agate_ch/``):
+
+    stage_seq_diagnosis.json
+    stage_seq_diagnosis.png
+    stage_seq_diagnosis_report.md
+
+Example:
+    python -m continuous_patterns.agate_ch.diagnose_stage_seq \\
+        --run-a results/agate_ch/stage_seq_run_a_YYYYMMDD \\
+        --run-b results/agate_ch/stage_seq_run_b_YYYYMMDD
 """
 
 from __future__ import annotations
@@ -24,14 +35,36 @@ except ImportError as exc:
 
 
 def _repo_root() -> Path:
+    """Return the repository root directory.
+
+    Returns:
+        Absolute path to the project root.
+    """
     return Path(__file__).resolve().parents[3]
 
 
 def _results_agate_ch() -> Path:
+    """Directory for agate_ch diagnosis artifacts.
+
+    Returns:
+        ``<repo>/results/agate_ch``.
+    """
     return _repo_root() / "results" / "agate_ch"
 
 
 def _load_h5_fields(h5_path: Path, index: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
+    """Load ``c``, ``phi_m``, ``phi_c`` from the ``index``-th snapshot group in HDF5.
+
+    Args:
+        h5_path: Path to ``snapshots.h5``.
+        index: Zero-based index into time-sorted ``t_*`` groups.
+
+    Returns:
+        Tuple ``(c, phi_m, phi_c, group_name)``.
+
+    Raises:
+        ValueError: If the HDF5 file contains no snapshot groups.
+    """
     with h5py.File(h5_path, "r") as h5:
         keys = sorted(h5.keys(), key=lambda x: int(str(x).split("_")[1]))
         if not keys:
@@ -45,6 +78,14 @@ def _load_h5_fields(h5_path: Path, index: int) -> tuple[np.ndarray, np.ndarray, 
 
 
 def _stats_global(a: np.ndarray) -> dict[str, float]:
+    """Compute min, max, mean, and std over the full array.
+
+    Args:
+        a: Field values on the grid.
+
+    Returns:
+        Dictionary with keys ``min``, ``max``, ``mean``, ``std``.
+    """
     a = np.asarray(a, dtype=np.float64)
     return {
         "min": float(np.min(a)),
@@ -55,6 +96,15 @@ def _stats_global(a: np.ndarray) -> dict[str, float]:
 
 
 def _stats_mask(a: np.ndarray, mask: np.ndarray) -> dict[str, float]:
+    """Compute statistics of ``a`` restricted to ``mask`` (boolean).
+
+    Args:
+        a: Field values.
+        mask: Boolean mask; same shape as ``a``.
+
+    Returns:
+        Stats dict; if no True entries, returns NaNs for all entries.
+    """
     v = np.asarray(a, dtype=np.float64)[mask]
     if v.size == 0:
         return {
@@ -74,6 +124,17 @@ def _stats_mask(a: np.ndarray, mask: np.ndarray) -> dict[str, float]:
 def _disk_masks(
     n: int, L: float, *, outside_r: float = 85.0, inside_r: float = 75.0
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Build radial masks for ``outside`` (annulus beyond cavity) and ``inside`` analyses.
+
+    Args:
+        n: Grid resolution per axis.
+        L: Physical domain side length (square domain ``[0,L]^2``).
+        outside_r: Cells with radius ``> outside_r`` are "outside" the cavity band.
+        inside_r: Cells with radius ``< inside_r`` are "inside" the cavity core.
+
+    Returns:
+        Tuple ``(outside_mask, inside_mask)`` boolean arrays shaped ``(n, n)``.
+    """
     dx = L / n
     x = (np.arange(n) + 0.5) * dx
     X, Y = np.meshgrid(x, x, indexing="ij")
@@ -84,6 +145,16 @@ def _disk_masks(
 
 
 def _inside_metrics(pm: np.ndarray, pc: np.ndarray, inside: np.ndarray) -> dict[str, float]:
+    """Summarize phase contrast and mixed-phase fraction inside a mask.
+
+    Args:
+        pm: Moganite phase field.
+        pc: Chalcedony phase field.
+        inside: Boolean mask for the interior region.
+
+    Returns:
+        Keys: ``std_phi_m``, ``mean_abs_phi_m_minus_phi_c``, ``fraction_mixed_phi_m``.
+    """
     pm_i = pm[inside]
     pc_i = pc[inside]
     contrast = np.mean(np.abs(pm_i - pc_i))
@@ -96,6 +167,19 @@ def _inside_metrics(pm: np.ndarray, pc: np.ndarray, inside: np.ndarray) -> dict[
 
 
 def _read_source_slice(rel: str, start_line: int, end_line: int) -> str:
+    """Read a line-numbered excerpt from a file under ``agate_ch/``.
+
+    Args:
+        rel: Path relative to ``src/continuous_patterns/agate_ch/``.
+        start_line: First 1-based line to include.
+        end_line: Last 1-based line to include (inclusive).
+
+    Returns:
+        Text block with ``lineno | source`` formatting for Markdown reports.
+
+    Raises:
+        OSError: If the source file cannot be read.
+    """
     path = _repo_root() / "src" / "continuous_patterns" / "agate_ch" / rel
     lines = path.read_text().splitlines()
     out: list[str] = []
@@ -111,6 +195,22 @@ def run_diagnosis(
     rtol: float = 1e-6,
     atol: float = 1e-8,
 ) -> dict[str, Any]:
+    """Execute all diagnosis checks and write JSON, PNG, and Markdown reports.
+
+    Args:
+        run_a_dir: Run A output directory (must contain ``final_state.npz``).
+        run_b_dir: Run B output directory (must contain ``snapshots.h5`` and
+            ``final_state.npz``).
+        rtol: Relative tolerance for ``numpy.allclose`` (Run A vs Run B init).
+        atol: Absolute tolerance for ``numpy.allclose``.
+
+    Returns:
+        Nested dict with ``checks`` (check1–6), ``preliminary_diagnosis``, and
+        ``output_files`` paths.
+
+    Raises:
+        FileNotFoundError: If required input files are missing.
+    """
     report: dict[str, Any] = {
         "run_a_dir": str(run_a_dir),
         "run_b_dir": str(run_b_dir),
@@ -475,8 +575,11 @@ def run_diagnosis(
 
 
 def main() -> None:
+    """CLI entry: parse paths, run :func:`run_diagnosis`, print summaries to stdout."""
     root = _repo_root()
-    ap = argparse.ArgumentParser(description="Diagnose stage_seq Run A / Run B consistency")
+    ap = argparse.ArgumentParser(
+        description="Diagnose stage_seq Run A / Run B consistency (read-only)."
+    )
     ap.add_argument(
         "--run-a",
         type=str,

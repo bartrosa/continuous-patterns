@@ -1,4 +1,15 @@
-"""Run Stage I (agate_ch with front) then Stage II (high-γ, no reaction, from snapshot)."""
+"""Orchestrate a full Experiment 2 stage sequence as two chained CLI runs.
+
+Stage I uses ``configs/agate_ch/stage_sequence/run_a_stage1.yaml``. Stage II
+loads ``run_b_stage2.yaml``, injects ``initial_condition.snapshot_path`` pointing
+to Stage I ``final_state.npz``, writes a temporary YAML, and runs ``agate_ch``.
+On success, writes ``results/agate_ch/stage_sequence_latest.json`` with paths to
+both runs for :mod:`continuous_patterns.agate_ch.plot_stage_sequence`.
+
+Example:
+    uv run python -m continuous_patterns.agate_ch.run_sequence
+    uv run python -m continuous_patterns.agate_ch.run_sequence --smoke
+"""
 
 from __future__ import annotations
 
@@ -23,6 +34,16 @@ def _run_cli(
     out_dir: Path,
     extra_args: list[str] | None = None,
 ) -> None:
+    """Invoke ``python -m continuous_patterns.agate_ch.run`` in a subprocess.
+
+    Args:
+        config_path: YAML config file to pass as ``--config``.
+        out_dir: Output directory for the run (``--out-dir``).
+        extra_args: Optional extra flags (e.g. ``--T``, ``--no-progress``).
+
+    Raises:
+        subprocess.CalledProcessError: If the child process fails.
+    """
     root = _repo_root()
     cfg_s = str(config_path.resolve())
     out_s = str(out_dir.resolve())
@@ -45,6 +66,18 @@ def run_stage_a(
     ts: str,
     extra_args: list[str] | None = None,
 ) -> Path:
+    """Run Stage I (concentric-band setup) into ``stage_seq_run_a_<ts>/``.
+
+    Args:
+        ts: Timestamp string used in the results folder name.
+        extra_args: Forwarded to the underlying ``agate_ch.run`` invocation.
+
+    Returns:
+        Resolved path to the Stage I output directory.
+
+    Raises:
+        FileNotFoundError: If ``final_state.npz`` was not produced.
+    """
     root = _repo_root()
     out = agate_ch_results_dir(root) / f"stage_seq_run_a_{ts}"
     print("=" * 60)
@@ -67,6 +100,19 @@ def run_stage_b(
     ts: str,
     extra_args: list[str] | None = None,
 ) -> Path:
+    """Run Stage II from ``run_a_dir/final_state.npz`` into ``stage_seq_run_b_<ts>/``.
+
+    Args:
+        run_a_dir: Stage I output directory containing ``final_state.npz``.
+        ts: Timestamp string matching the Stage I run (same basename suffix).
+        extra_args: Forwarded to ``agate_ch.run``.
+
+    Returns:
+        Resolved path to the Stage II output directory.
+
+    Raises:
+        FileNotFoundError: If the snapshot file is missing.
+    """
     root = _repo_root()
     snapshot = Path(run_a_dir) / "final_state.npz"
     if not snapshot.is_file():
@@ -101,7 +147,10 @@ def run_stage_b(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Sequential Stage I → Stage II agate_ch runs")
+    """CLI: run Stage A then Stage B and write ``stage_sequence_latest.json``."""
+    ap = argparse.ArgumentParser(
+        description="Sequential Stage I → Stage II agate_ch runs.",
+    )
     ap.add_argument(
         "--smoke",
         action="store_true",

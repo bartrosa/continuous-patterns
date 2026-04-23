@@ -84,6 +84,22 @@ def print_ring_mask_sanity(
 
 
 class SimParams(NamedTuple):
+    """Immutable numerical and flag bundle for one agate_ch simulation.
+
+    Built from flattened YAML via :func:`cfg_to_sim_params`. Fields include
+    Cahn–Hilliard and silica-transport parameters, Dirichlet/reaction toggles,
+    and geometry-related projection flags:
+
+    Attributes:
+        apply_cavity_mask: If True, after each IMEX step multiply ``phi_*`` (and
+            optionally ``c``) by the smoothed cavity indicator ``chi`` so
+            crystalline phases vanish outside the agate cavity.
+        project_c_on_cavity: If True, dissolved silica ``c`` is also multiplied by
+            ``chi`` each step. If False, only phase fields are projected; use when
+            ``disable_dirichlet`` is True to avoid spurious leakage of ``c`` from
+            repeated ``chi<1`` attenuation at the rim.
+    """
+
     W: float
     gamma: float
     kappa: float
@@ -109,13 +125,32 @@ class SimParams(NamedTuple):
 
 
 def _resolve_disable_dirichlet(cfg: dict[str, Any]) -> bool:
-    """Prefer ``enable_dirichlet``; else legacy ``disable_dirichlet``; default = Dirichlet ON."""
+    """Return whether Dirichlet rim forcing is disabled for dissolved silica.
+
+    Args:
+        cfg: Flat solver configuration dict.
+
+    Returns:
+        True if Dirichlet boundary treatment is off; False if rim/ring ``c``
+        enforcement is active. Prefers explicit ``enable_dirichlet`` when
+        present, else legacy ``disable_dirichlet`` (default: Dirichlet on).
+    """
     if "enable_dirichlet" in cfg:
         return not bool(cfg["enable_dirichlet"])
     return bool(cfg.get("disable_dirichlet", False))
 
 
 def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
+    """Map a flat agate_ch config dict to :class:`SimParams`.
+
+    Args:
+        cfg: Flat dict (from nested YAML via ``flatten_nested_cfg`` or legacy
+            single-level configs). Must include required keys ``W``, ``gamma``,
+            ``kappa``, transport and thermodynamic parameters.
+
+    Returns:
+        A :class:`SimParams` instance with booleans/coercion applied.
+    """
     W = float(cfg["W"])
     _er = cfg.get("enable_reaction", True)
     enable_rx = float(1.0 if _er else 0.0)

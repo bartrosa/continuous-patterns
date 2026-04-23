@@ -1,7 +1,14 @@
-"""Plot phi_m - phi_c at several timesteps from long Run B.
+"""Visualization helper for long Run B HDF5 snapshots.
 
-Creates a grid of snapshots at roughly log-spaced simulation times to show
-temporal evolution from initial bands toward a late-time state.
+Loads ``snapshots.h5`` from a ``stage_seq_run_b_long_*`` results directory (as
+created by ``run_b_long``), selects approximately log-spaced snapshot indices,
+and saves a multi-panel figure of ``phi_m - phi_c`` versus simulation time.
+
+Typical usage::
+
+    uv run python -m continuous_patterns.agate_ch.plot_run_b_time_series
+    uv run python -m continuous_patterns.agate_ch.plot_run_b_time_series \\
+        --run-dir results/agate_ch/stage_seq_run_b_long_YYYYMMDD_HHMMSS
 """
 
 from __future__ import annotations
@@ -16,11 +23,28 @@ import numpy as np
 
 
 def _repo_root() -> Path:
+    """Return the repository root directory.
+
+    Returns:
+        Absolute ``Path`` to the project root (contains ``results/agate_ch``).
+    """
     return Path(__file__).resolve().parents[3]
 
 
 def find_latest_run_b_long(results_root: Path | None = None) -> Path:
-    """Most recent ``results/agate_ch/stage_seq_run_b_long_*`` directory."""
+    """Locate the most recently modified long Run B output directory.
+
+    Args:
+        results_root: Directory that holds ``stage_seq_run_b_long_*`` folders.
+            Defaults to ``<repo>/results/agate_ch``.
+
+    Returns:
+        Path to the lexicographically last matching ``stage_seq_run_b_long_*``
+        directory (same as newest timestamp if names use ``YYYYMMDD_HHMMSS``).
+
+    Raises:
+        FileNotFoundError: If no matching directory exists.
+    """
     root = results_root or (_repo_root() / "results" / "agate_ch")
     candidates = sorted(glob.glob(str(root / "stage_seq_run_b_long_*")))
     if not candidates:
@@ -33,7 +57,14 @@ def find_latest_run_b_long(results_root: Path | None = None) -> Path:
 
 
 def _iter_snap_steps(h5_path: Path) -> list[tuple[int, str]]:
-    """Return sorted list of (step_index, group_name)."""
+    """List snapshot groups from an agate_ch ``snapshots.h5`` file.
+
+    Args:
+        h5_path: Path to ``snapshots.h5`` containing groups ``t_<step>``.
+
+    Returns:
+        Sorted list of ``(integer_step, group_name)`` tuples, ascending by step.
+    """
     out: list[tuple[int, str]] = []
     with h5py.File(h5_path, "r") as h5:
         for name in h5.keys():
@@ -45,7 +76,19 @@ def _iter_snap_steps(h5_path: Path) -> list[tuple[int, str]]:
 
 
 def _pick_log_spaced_indices(n: int, k: int) -> list[int]:
-    """Pick k indices spanning [0, n-1] with approximate log-spacing in time-like index."""
+    """Choose up to ``k`` indices from ``range(n)`` with spread favoring early and late times.
+
+    Uses geometric spacing over index position so panels emphasize evolution from
+    the first snapshots through late-time states (useful for long runs with many
+    frames).
+
+    Args:
+        n: Number of available snapshots (length of the sorted snapshot list).
+        k: Desired number of panels.
+
+    Returns:
+        Sorted unique indices into the snapshot list, length at most ``min(k, n)``.
+    """
     if n <= 0 or k <= 0:
         return []
     if k >= n:
@@ -70,7 +113,20 @@ def plot_time_series(
     n_panels: int = 9,
     dt: float | None = None,
 ) -> None:
-    """Plot phi_m - phi_c at ``n_panels`` snapshot times (log-spaced when possible)."""
+    """Render a grid of ``phi_m - phi_c`` fields at selected times.
+
+    Args:
+        run_dir: Directory containing ``snapshots.h5`` (and optionally
+            ``summary.json`` for ``dt``).
+        output_path: Where to write the PNG figure.
+        n_panels: Number of subplots; layout is chosen as a near-square grid.
+        dt: Time step for axis labels. If ``None``, read ``parameters.dt`` from
+            ``run_dir/summary.json``, else default ``0.01``.
+
+    Raises:
+        FileNotFoundError: If ``snapshots.h5`` is missing.
+        ValueError: If the HDF5 file has no ``t_*`` groups.
+    """
     h5_path = run_dir / "snapshots.h5"
     if not h5_path.is_file():
         raise FileNotFoundError(f"No snapshots.h5 under {run_dir}")
@@ -119,6 +175,14 @@ def plot_time_series(
 
 
 def _read_dt(run_dir: Path) -> float:
+    """Read simulation ``dt`` from ``summary.json`` when present.
+
+    Args:
+        run_dir: Run output directory.
+
+    Returns:
+        ``dt`` from embedded parameters, or ``0.01`` if unavailable.
+    """
     summ = run_dir / "summary.json"
     if summ.is_file():
         import json
@@ -131,6 +195,7 @@ def _read_dt(run_dir: Path) -> float:
 
 
 def main() -> None:
+    """CLI: plot time series from latest or user-specified long Run B directory."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--run-dir",

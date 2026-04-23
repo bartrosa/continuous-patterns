@@ -1,4 +1,12 @@
-"""Side-by-side Stage I vs Stage II final fields (reads ``stage_sequence_latest.json``)."""
+"""Plot Stage I vs Stage II ``final_state.npz`` fields side by side.
+
+Reads paths from ``results/agate_ch/stage_sequence_latest.json`` (written by
+:mod:`continuous_patterns.agate_ch.run_sequence`) or from a user-supplied JSON,
+then saves a comparison PNG (default ``stage_sequence_comparison.png``).
+
+Example:
+    uv run python -m continuous_patterns.agate_ch.plot_stage_sequence
+"""
 
 from __future__ import annotations
 
@@ -14,6 +22,18 @@ from continuous_patterns.agate_ch.run import _repo_root, agate_ch_results_dir
 
 
 def load_final_state(run_dir: Path) -> dict[str, np.ndarray]:
+    """Load ``phi_m``, ``phi_c``, and ``c`` from ``run_dir/final_state.npz``.
+
+    Args:
+        run_dir: Simulation output directory.
+
+    Returns:
+        Dictionary with numpy arrays keyed by field name.
+
+    Raises:
+        FileNotFoundError: If ``final_state.npz`` does not exist.
+        KeyError: If expected datasets are absent from the archive.
+    """
     path = run_dir / "final_state.npz"
     data = np.load(path, allow_pickle=False)
     return {
@@ -28,6 +48,13 @@ def plot_comparison(
     run_b_dir: Path,
     output_path: Path,
 ) -> None:
+    """Save a 2×3 figure of ``phi_m``, ``phi_c``, and ``phi_m - phi_c`` for both stages.
+
+    Args:
+        run_a_dir: Stage I directory with ``final_state.npz``.
+        run_b_dir: Stage II directory with ``final_state.npz``.
+        output_path: Destination PNG path.
+    """
     state_a = load_final_state(run_a_dir)
     state_b = load_final_state(run_b_dir)
 
@@ -61,8 +88,11 @@ def plot_comparison(
 
 
 def main() -> None:
+    """CLI: resolve JSON paths and call :func:`plot_comparison`."""
     root = _repo_root()
-    ap = argparse.ArgumentParser(description="Plot Stage I vs Stage II final_state.npz")
+    ap = argparse.ArgumentParser(
+        description="Plot Stage I vs Stage II final fields from stage_sequence_latest.json.",
+    )
     ap.add_argument(
         "--json",
         type=str,
