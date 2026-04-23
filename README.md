@@ -59,6 +59,8 @@ The stack includes a **barrier** on φ outside [0,1], **soft clip** to [−0.05,
 
 Defaults live in **`configs/agate_ch/baseline.yaml`** (referenced by `--config`; you can omit `--config` to use it).
 
+**Backward compatibility:** YAML without optional keys keeps the same meaning as in older commits (for example **`c0_alpha`** defaults to **0** — no gravity rim gradient). Existing sweeps, Experiment 2 stage-sequence configs, and **`uniform_supersaturation: false`** baselines are unchanged numerically when you do not set **`physics.c0_alpha`**.
+
 ### Install simulation extras
 
 ```bash
@@ -157,3 +159,20 @@ uv run python -m continuous_patterns.agate_ch.run \
 ```
 
 Sequential Stage I→II: **`python -m continuous_patterns.agate_ch.run_sequence`**. Read-only Run A vs Run B check: **`python -m continuous_patterns.agate_ch.diagnose_stage_seq`** (writes under **`results/agate_ch/stage_seq_diagnosis.*`**).
+
+### Experiment 4 — rim silica gradient (`c0_alpha`)
+
+YAMLs under **`configs/agate_ch/gravity/`** share one seed and vary **`physics.c0_alpha`** only (linear **y**-dependence of Dirichlet **c₀** on the cavity rim — see solver docstrings). They set **`diagnostics.progress_stderr: true`** so each run shows a **tqdm** step bar on stderr (disable with **`--no-progress`** on the sweep command, which forwards it to each child run). Batch runs:
+
+```bash
+uv run python -m continuous_patterns.agate_ch.run_gravity_sweep
+```
+
+Plots from a sweep directory’s **`manifest.json`**:
+
+```bash
+uv run python -m continuous_patterns.agate_ch.plot_gravity_sweep \
+  --manifest results/agate_ch/gravity_sweep_<timestamp>/manifest.json
+```
+
+PNG outputs default to **`results/agate_ch/gravity_comparison.png`** and **`gravity_vertical_profiles.png`** (override with **`--output-dir`**).

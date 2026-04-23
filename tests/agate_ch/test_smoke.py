@@ -63,10 +63,9 @@ def test_surface_flux_long_horizon_baseline_style() -> None:
     ic = initial_state(
         geom,
         key,
-        c_sat=prm.c_sat,
-        c_0=prm.c_0,
+        prm=prm,
+        L=float(cfg["L"]),
         noise=0.01,
-        uniform_supersaturation=prm.uniform_supersaturation,
     )
     snaps_full = [
         (
@@ -124,10 +123,9 @@ def test_fp32_mass_balance_still_acceptable() -> None:
     ic = initial_state(
         geom,
         key,
-        c_sat=prm.c_sat,
-        c_0=prm.c_0,
+        prm=prm,
+        L=float(cfg["L"]),
         noise=0.01,
-        uniform_supersaturation=prm.uniform_supersaturation,
     )
     snaps_full = [
         (
@@ -243,10 +241,9 @@ def test_mass_balance_matches_production(tmp_path: Path) -> None:
     ic = initial_state(
         geom,
         key,
-        c_sat=prm.c_sat,
-        c_0=prm.c_0,
+        prm=prm,
+        L=float(cfg["L"]),
         noise=0.01,
-        uniform_supersaturation=prm.uniform_supersaturation,
     )
     snaps_full = [
         (
@@ -333,10 +330,9 @@ def test_imex_rim_replenishment_positive() -> None:
     state = initial_state(
         geom,
         key,
-        c_sat=prm.c_sat,
-        c_0=prm.c_0,
+        prm=prm,
+        L=float(cfg["L"]),
         noise=0.01,
-        uniform_supersaturation=prm.uniform_supersaturation,
     )
     new_s, dd = imex_step(state, None, geom, prm, 0.01)
     assert float(dd[0]) > 0.0 and float(dd[1]) > 0.0

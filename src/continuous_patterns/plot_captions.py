@@ -55,14 +55,14 @@ def figure_add_parameter_footer(
     fig: Any,
     cfg: Mapping[str, Any] | None,
     *,
-    fontsize: float = 4.2,
+    fontsize: float = 5.5,
 ) -> list[Any]:
     """Reserve bottom space and draw parameter text on a Matplotlib figure.
 
     Args:
         fig: A :class:`matplotlib.figure.Figure`.
         cfg: Parameters to render; skipped if ``None`` or empty caption.
-        fontsize: Footnote font size (small to fit many keys).
+        fontsize: Footnote font size (monospace; default tuned for readability on typical DPI).
 
     Returns:
         List of artists to pass as ``bbox_extra_artists`` when using
@@ -74,7 +74,7 @@ def figure_add_parameter_footer(
     if not text.strip():
         return []
     nlines = max(1, text.count("\n") + 1)
-    bottom_frac = min(0.5, max(0.12, 0.07 + nlines * 0.0105))
+    bottom_frac = min(0.52, max(0.13, 0.085 + nlines * 0.012))
     fig.subplots_adjust(bottom=bottom_frac)
     t = fig.text(
         0.5,

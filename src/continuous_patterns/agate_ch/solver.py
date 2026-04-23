@@ -1,4 +1,17 @@
-"""Pseudo-spectral IMEX Model C step + chunked scan for long runs."""
+"""Pseudo-spectral IMEX Model C step + chunked scan for long runs.
+
+Dirichlet silica on the cavity rim defaults to scalar ``c_0``. Optional
+``physics.c0_alpha`` (flat ``c0_alpha`` after YAML flattening) defines a vertical
+linear ramp ``c_0(y)`` on the **enforcement ring only** — see
+:func:`rim_dirichlet_c_targets`.
+
+**Backward compatibility:** configs without ``c0_alpha`` behave like older
+checkouts (``c0_alpha`` defaults to ``0.0``). When ``uniform_supersaturation``
+is enabled and ``c0_alpha`` is zero, dissolved ``c`` is still ``c_0 * χ``
+everywhere in the cavity at the start/end of each IMEX step (legacy model).
+Enable ``physics.c0_alpha != 0`` only when using the gravity-rim variant
+(Experiment 4).
+"""
 
 from __future__ import annotations
 
@@ -83,12 +96,27 @@ def print_ring_mask_sanity(
     return stats
 
 
+def rim_dirichlet_c_targets(L: float, geom: Geometry, prm: SimParams) -> jnp.ndarray:
+    """Boundary silica target on the Dirichlet ring: ``c_0`` or ``c_0(y)`` gravity ramp.
+
+    ``c_local(y) = c_0 * (1 + c0_alpha * (y - L/2) / (L/2))`` — midline ``y=L/2`` unchanged,
+    top/bottom ±α. Interior values are untouched here; multiply by ``ring`` mask at call sites.
+    When ``c0_alpha == 0``, equals scalar ``c_0`` everywhere (fp32).
+    """
+    n = geom.chi.shape[0]
+    dx = jnp.asarray(geom.dx, dtype=jnp.float32)
+    y1d = (jnp.arange(n, dtype=jnp.float32) + jnp.float32(0.5)) * dx
+    half_l = jnp.float32(0.5 * L)
+    Y = jnp.broadcast_to(y1d[None, :], (n, n))
+    ramp = jnp.float32(prm.c0_alpha) * (Y - half_l) / jnp.maximum(half_l, jnp.float32(1e-12))
+    c0 = jnp.float32(prm.c_0)
+    return c0 * (jnp.float32(1.0) + ramp)
+
+
 class SimParams(NamedTuple):
     """Immutable numerical and flag bundle for one agate_ch simulation.
 
-    Built from flattened YAML via :func:`cfg_to_sim_params`. Fields include
-    Cahn–Hilliard and silica-transport parameters, Dirichlet/reaction toggles,
-    and geometry-related projection flags:
+    Built from flattened YAML via :func:`cfg_to_sim_params`.
 
     Attributes:
         apply_cavity_mask: If True, after each IMEX step multiply ``phi_*`` (and
@@ -98,6 +126,12 @@ class SimParams(NamedTuple):
             ``chi`` each step. If False, only phase fields are projected; use when
             ``disable_dirichlet`` is True to avoid spurious leakage of ``c`` from
             repeated ``chi<1`` attenuation at the rim.
+        c0_alpha: Rim Dirichlet gravity ramp strength (Experiment 4). Default ``0``
+            restores legacy behavior everywhere this parameter is irrelevant.
+            With ``uniform_supersaturation`` enabled and ``c0_alpha == 0``, dissolved
+            ``c`` stays exactly ``c_0 * χ`` over the cavity (historical semantics); for
+            ``c0_alpha != 0``, the ramp applies on the enforcement ring only while
+            non-ring cavity cells remain ``c_0 * χ``.
     """
 
     W: float
@@ -110,6 +144,7 @@ class SimParams(NamedTuple):
     M_c: float
     c_sat: float
     c_0: float
+    c0_alpha: float
     c_ostwald: float
     w_ostwald: float
     uniform_supersaturation: bool
@@ -149,7 +184,9 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
             ``kappa``, transport and thermodynamic parameters.
 
     Returns:
-        A :class:`SimParams` instance with booleans/coercion applied.
+        A :class:`SimParams` instance with booleans/coercion applied. Missing
+        ``c0_alpha`` defaults to ``0.0`` (backward compatible with configs predating
+        Experiment 4).
     """
     W = float(cfg["W"])
     _er = cfg.get("enable_reaction", True)
@@ -165,6 +202,7 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
         M_c=float(cfg["M_c"]),
         c_sat=float(cfg["c_sat"]),
         c_0=float(cfg["c_0"]),
+        c0_alpha=float(cfg.get("c0_alpha", 0.0)),
         c_ostwald=float(cfg["c_ostwald"]),
         w_ostwald=float(cfg["w_ostwald"]),
         uniform_supersaturation=bool(cfg.get("uniform_supersaturation", False)),
@@ -193,11 +231,17 @@ def imex_step(
 ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
     c, phim, phic = state
     dx = jnp.asarray(geom.dx, dtype=jnp.float32)
+    L_step = float(geom.chi.shape[0]) * float(geom.dx)
+    rim_c = rim_dirichlet_c_targets(L_step, geom, prm)
     if not prm.disable_dirichlet:
         if prm.uniform_supersaturation:
-            c = prm.c_0 * geom.chi
+            # Legacy cavity-wide supersaturation: unchanged when gravity ramp is off.
+            if float(prm.c0_alpha) == 0.0:
+                c = prm.c_0 * geom.chi
+            else:
+                c = jnp.where(geom.ring > 0.5, rim_c, prm.c_0 * geom.chi)
         else:
-            c = jnp.where(geom.ring > 0.5, prm.c_0, c)
+            c = jnp.where(geom.ring > 0.5, rim_c, c)
 
     Gm = precipitation(c, phim, phic, k_reaction=prm.k_reaction, c_sat=prm.c_sat)
     Gm = Gm * jnp.asarray(prm.enable_reaction, dtype=Gm.dtype)
@@ -251,13 +295,17 @@ def imex_step(
     elif prm.uniform_supersaturation:
         chi_u = geom.chi
         c_before_bc = c_new
-        c_new = prm.c_0 * chi_u
+        if float(prm.c0_alpha) == 0.0:
+            c_new = prm.c_0 * chi_u
+        else:
+            ring_bc_u = geom.ring > 0.5
+            c_new = jnp.where(ring_bc_u, rim_c, prm.c_0 * chi_u)
         delta_full = jnp.sum(c_new - c_before_bc) * dx_sq
         delta_pair = jnp.stack([delta_full, delta_full])
     else:
         c_before_bc = c_new
         ring_bc = geom.ring > 0.5
-        c_new = jnp.where(ring_bc, prm.c_0, c_new)
+        c_new = jnp.where(ring_bc, rim_c, c_new)
         dc = c_new - c_before_bc
         thin_m = jnp.asarray(geom.ring_accounting, dtype=jnp.float32)
         delta_thin = jnp.sum(dc * thin_m) * dx_sq
@@ -280,10 +328,9 @@ def initial_state(
     geom: Geometry,
     key: jax.Array,
     *,
-    c_sat: float,
-    c_0: float,
+    prm: SimParams,
+    L: float,
     noise: float,
-    uniform_supersaturation: bool,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     n = geom.chi.shape[0]
     k1, k2 = jax.random.split(key)
@@ -293,11 +340,17 @@ def initial_state(
     inside = chi > 0.5
     phim = jnp.where(inside, jnp.clip(rm, -0.05, 0.05), 0.0) * chi
     phic = jnp.where(inside, jnp.clip(rc, -0.05, 0.05), 0.0) * chi
-    if uniform_supersaturation:
-        c = jnp.where(inside, c_0, 0.0) * chi
+    if prm.uniform_supersaturation:
+        if float(prm.c0_alpha) == 0.0:
+            c = jnp.where(inside, prm.c_0, 0.0) * chi
+        else:
+            rim_c = rim_dirichlet_c_targets(L, geom, prm)
+            base = jnp.where(inside, prm.c_0, 0.0) * chi
+            c = jnp.where(geom.ring > 0.5, rim_c, base)
     else:
-        c = jnp.where(inside, c_sat, 0.0) * chi
-        c = jnp.where(geom.ring > 0.5, c_0, c)
+        rim_c = rim_dirichlet_c_targets(L, geom, prm)
+        c = jnp.where(inside, prm.c_sat, 0.0) * chi
+        c = jnp.where(geom.ring > 0.5, rim_c, c)
     return c, phim, phic
 
 
@@ -401,10 +454,9 @@ def build_initial_state(
     return initial_state(
         geom,
         key,
-        c_sat=prm.c_sat,
-        c_0=prm.c_0,
+        prm=prm,
+        L=L,
         noise=float(cfg.get("noise_ic", 0.01)),
-        uniform_supersaturation=prm.uniform_supersaturation,
     )
 
 

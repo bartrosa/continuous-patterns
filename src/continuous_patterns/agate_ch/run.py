@@ -1,4 +1,11 @@
-"""CLI entry; default config ``configs/agate_ch/baseline.yaml``."""
+"""CLI entry; default config ``configs/agate_ch/baseline.yaml``.
+
+All historical entry points (single run, ``--sweep``, stage-sequence configs, quick
+smoke) keep working: new physics keys are optional; see
+:func:`continuous_patterns.agate_ch.solver.cfg_to_sim_params` and
+:func:`continuous_patterns.agate_ch.run.flatten_nested_cfg`. Gravity / rim-gradient
+Experiment 4 lives under ``configs/agate_ch/gravity/`` (``physics.c0_alpha``).
+"""
 
 from __future__ import annotations
 
