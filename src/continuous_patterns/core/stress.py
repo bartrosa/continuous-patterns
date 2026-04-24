@@ -15,7 +15,7 @@ from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from continuous_patterns.core.spectral import divergence_real, grad_real
 
@@ -24,9 +24,8 @@ from continuous_patterns.core.spectral import divergence_real, grad_real
 # ---------------------------------------------------------------------------
 
 
-def _cell_grid(*, L: float, n: int) -> tuple[Array, Array, float]:
+def _cell_grid(*, L: float, n: int, dtype: DTypeLike) -> tuple[Array, Array, float]:
     dx = L / n
-    dtype = jnp.float64
     ii = jnp.arange(n, dtype=dtype)[:, None]
     jj = jnp.arange(n, dtype=dtype)[None, :]
     x = jnp.broadcast_to((ii + 0.5) * dx, (n, n))
@@ -34,8 +33,8 @@ def _cell_grid(*, L: float, n: int) -> tuple[Array, Array, float]:
     return x, y, float(dx)
 
 
-def _zeros(*, L: float, n: int) -> tuple[Array, Array, Array]:
-    z = jnp.zeros((n, n), dtype=jnp.float64)
+def _zeros(*, n: int, dtype: DTypeLike) -> tuple[Array, Array, Array]:
+    z = jnp.zeros((n, n), dtype=dtype)
     return z, z, z
 
 
@@ -44,33 +43,41 @@ def _zeros(*, L: float, n: int) -> tuple[Array, Array, Array]:
 # ---------------------------------------------------------------------------
 
 
-def none(*, L: float, n: int, **_: Any) -> tuple[Array, Array, Array]:
+def none(
+    *, L: float, n: int, dtype: DTypeLike = jnp.float32, **_: Any
+) -> tuple[Array, Array, Array]:
     """All-zero stress tensor (explicit ``none`` mode)."""
     _ = L
-    return _zeros(L=L, n=n)
+    return _zeros(n=n, dtype=dtype)
 
 
-def uniform_uniaxial(*, L: float, n: int, sigma_0: float) -> tuple[Array, Array, Array]:
+def uniform_uniaxial(
+    *, L: float, n: int, sigma_0: float, dtype: DTypeLike = jnp.float32
+) -> tuple[Array, Array, Array]:
     """``σ_xx = σ₀``, ``σ_yy = σ_xy = 0`` (PHYSICS §7.1)."""
     _ = L  # domain length; kept for a uniform builder keyword API across modes
-    z = jnp.zeros((n, n), dtype=jnp.float64)
-    sxx = jnp.full((n, n), float(sigma_0), dtype=jnp.float64)
+    z = jnp.zeros((n, n), dtype=dtype)
+    sxx = jnp.full((n, n), float(sigma_0), dtype=dtype)
     return sxx, z, z
 
 
-def uniform_biaxial(*, L: float, n: int, sigma_0: float) -> tuple[Array, Array, Array]:
+def uniform_biaxial(
+    *, L: float, n: int, sigma_0: float, dtype: DTypeLike = jnp.float32
+) -> tuple[Array, Array, Array]:
     """``σ_xx = σ_yy = σ₀``, ``σ_xy = 0`` (PHYSICS §7.2)."""
     _ = L
-    z = jnp.zeros((n, n), dtype=jnp.float64)
-    s = jnp.full((n, n), float(sigma_0), dtype=jnp.float64)
+    z = jnp.zeros((n, n), dtype=dtype)
+    s = jnp.full((n, n), float(sigma_0), dtype=dtype)
     return s, s, z
 
 
-def pure_shear(*, L: float, n: int, sigma_0: float) -> tuple[Array, Array, Array]:
+def pure_shear(
+    *, L: float, n: int, sigma_0: float, dtype: DTypeLike = jnp.float32
+) -> tuple[Array, Array, Array]:
     """``σ_xy = σ₀``, ``σ_xx = σ_yy = 0`` (PHYSICS §7.3)."""
     _ = L
-    z = jnp.zeros((n, n), dtype=jnp.float64)
-    sxy = jnp.full((n, n), float(sigma_0), dtype=jnp.float64)
+    z = jnp.zeros((n, n), dtype=dtype)
+    sxy = jnp.full((n, n), float(sigma_0), dtype=dtype)
     return z, z, sxy
 
 
@@ -92,9 +99,10 @@ def flamant_two_point(
     n: int,
     sigma_0: float,
     stress_eps_factor: float = 3.0,
+    dtype: DTypeLike = jnp.float32,
 ) -> tuple[Array, Array, Array]:
     """Two opposing Flamant half-space loads on the vertical diameter (PHYSICS §7.4)."""
-    x, y, dx = _cell_grid(L=L, n=n)
+    x, y, dx = _cell_grid(L=L, n=n, dtype=dtype)
     xc = 0.5 * L
     yc = 0.5 * L
     eps = float(stress_eps_factor) * dx
@@ -110,15 +118,16 @@ def flamant_two_point(
     sxy = su[2] + sl[2]
     dev = sxx - syy
     peak = jnp.max(jnp.abs(dev))
-    scale = jnp.asarray(float(sigma_0), dtype=jnp.float64) / jnp.maximum(
-        peak, jnp.asarray(1e-30, dtype=jnp.float64)
-    )
+    dt = dev.dtype
+    scale = jnp.asarray(float(sigma_0), dtype=dt) / jnp.maximum(peak, jnp.asarray(1e-30, dtype=dt))
     return scale * sxx, scale * syy, scale * sxy
 
 
-def pressure_gradient(*, L: float, n: int, sigma_0: float) -> tuple[Array, Array, Array]:
+def pressure_gradient(
+    *, L: float, n: int, sigma_0: float, dtype: DTypeLike = jnp.float32
+) -> tuple[Array, Array, Array]:
     """Isotropic linear ``y``-pressure (PHYSICS §7.5): ``p(y)=σ₀(y-L/2)/(L/2)``, ``σ=-p I``."""
-    _, y, _ = _cell_grid(L=L, n=n)
+    _, y, _ = _cell_grid(L=L, n=n, dtype=dtype)
     p = float(sigma_0) * (y - 0.5 * L) / (0.5 * L)
     sxx = -p
     syy = -p
