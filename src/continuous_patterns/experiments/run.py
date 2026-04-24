@@ -1,12 +1,16 @@
 """Canonical CLI: nested config → simulate → ``results/`` tree.
 
 ``python -m continuous_patterns.experiments.run --config …`` (``docs/ARCHITECTURE.md`` §6.1).
+
+Environment: ``CP_OVERRIDE_T`` — if set to a float string, overrides ``time.T`` after
+``load_run_config`` (used by ``scripts/reproduce_canonical.py`` mini mode).
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from dataclasses import replace
@@ -24,7 +28,7 @@ from continuous_patterns.core.io import (
     save_summary,
     write_figures_final,
 )
-from continuous_patterns.core.plotting import parse_run_stamp_utc
+from continuous_patterns.core.plotting import parse_run_stamp_utc, write_evolution_gif
 from continuous_patterns.core.types import SimResult
 from continuous_patterns.models import agate_ch, agate_stage2
 
@@ -94,6 +98,9 @@ def run_one(
         raise ValueError(f"Unknown model: {model_name!r}. Available: {sorted(MODEL_DISPATCH)}")
     simulate_fn = MODEL_DISPATCH[model_name]
 
+    cfg.setdefault("output", {})
+    cfg["output"]["record_spectral_mass_diagnostic"] = True
+
     paths: ResultPaths | None = None
     if write_artifacts:
         if results_root is None:
@@ -141,6 +148,21 @@ def run_one(
                 params=params_for_panel,
                 include_params_panel=include_panel,
             )
+            out = cfg.get("output", {})
+            if bool(out.get("record_evolution_gif", False)):
+                gif_snaps = result.meta.get("gif_snapshots")
+                if isinstance(gif_snaps, list) and gif_snaps:
+                    gif_path = paths.root / "evolution_phi_m.gif"
+                    fps = int(out.get("gif_fps", 10))
+                    write_evolution_gif(
+                        gif_snaps,
+                        gif_path,
+                        L=float(gcfg["L"]),
+                        R=float(gcfg.get("R", 0.0)),
+                        fps=fps,
+                        field_name="phi_m",
+                    )
+                    logger.info("Wrote evolution GIF to %s", gif_path)
             logger.info("Artifacts written to %s", paths.root)
             return replace(result, paths=paths)
 
@@ -163,6 +185,15 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         required=True,
         help="Path to nested YAML config.",
+    )
+    parser.add_argument(
+        "--user-settings",
+        type=Path,
+        default=None,
+        help=(
+            "Optional solver-overrides YAML "
+            "(default: experiments/solver_settings.yaml when present)."
+        ),
     )
     parser.add_argument(
         "--out-dir",
@@ -195,10 +226,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        cfg = load_run_config(Path(args.config))
+        cfg = load_run_config(
+            Path(args.config),
+            user_settings_path=args.user_settings,
+        )
     except ValueError as e:
         print(f"Config load failed: {e}", file=sys.stderr)
         return 2
+
+    ot = os.environ.get("CP_OVERRIDE_T")
+    if ot is not None and str(ot).strip() != "":
+        cfg.setdefault("time", {})
+        cfg["time"]["T"] = float(ot)
 
     try:
         result = run_one(

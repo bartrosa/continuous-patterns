@@ -10,7 +10,7 @@ from continuous_patterns.core.io import load_run_config, save_run_config
 from continuous_patterns.experiments.run import main, run_one
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_TEMPLATES_DIR = _REPO_ROOT / "src" / "continuous_patterns" / "experiments" / "templates"
+_TEMPLATES_DIR = _REPO_ROOT / "experiments" / "canonical"
 
 
 def _minimal_agate_ch_cfg() -> dict:
@@ -112,7 +112,7 @@ def test_run_one_unknown_model() -> None:
 
 def test_cli_main_reads_template(tmp_path: Path) -> None:
     """``main()`` runs a downsized copy of the agate_ch template."""
-    template = _TEMPLATES_DIR / "agate_ch_baseline.yaml"
+    template = _TEMPLATES_DIR / "medium_pinning.yaml"
     cfg = load_run_config(template)
     cfg["geometry"]["n"] = 32
     cfg["time"]["T"] = 1.0
@@ -135,7 +135,7 @@ def test_cli_main_reads_template(tmp_path: Path) -> None:
 
 
 def test_templates_load_successfully() -> None:
-    """Shipped templates under ``experiments/templates/`` pass ``load_run_config``."""
+    """Shipped canonical YAMLs under ``experiments/canonical/`` pass ``load_run_config``."""
     assert _TEMPLATES_DIR.is_dir()
     templates = sorted(_TEMPLATES_DIR.glob("*.yaml"))
     assert len(templates) == 8
