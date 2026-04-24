@@ -83,10 +83,12 @@ def test_imex_step_preserves_shape_and_dtype() -> None:
     phi_m = 0.5 * jnp.ones((n, n), dtype=jnp.float64)
     phi_c = 0.5 * jnp.ones((n, n), dtype=jnp.float64)
     c = 0.3 * jnp.ones((n, n), dtype=jnp.float64)
-    (pm, pc, cc), delta = imex_step((phi_m, phi_c, c), geom, prm, 1e-3)
+    (pm, pc, cc), (delta_pair, injection) = imex_step((phi_m, phi_c, c), geom, prm, 1e-3)
     assert pm.shape == pc.shape == cc.shape == (n, n)
     assert pm.dtype == jnp.float64
-    assert delta.shape == (2,)
+    assert delta_pair.shape == (2,)
+    assert injection.shape == ()
+    assert float(injection) == 0.0
 
 
 def test_stage2_no_reaction_no_dirichlet_near_equilibrium() -> None:
@@ -106,7 +108,7 @@ def test_stage2_no_reaction_no_dirichlet_near_equilibrium() -> None:
     phi_c = 0.5 * jnp.ones((n, n), dtype=jnp.float64)
     c = 0.4 * jnp.ones((n, n), dtype=jnp.float64)
     dt = 1e-4
-    (pm, pc, cc), _ = imex_step((phi_m, phi_c, c), geom, prm, dt)
+    (pm, pc, cc), _pair = imex_step((phi_m, phi_c, c), geom, prm, dt)
     assert jnp.allclose(pm, phi_m, rtol=0, atol=1e-9)
     assert jnp.allclose(pc, phi_c, rtol=0, atol=1e-9)
     assert jnp.allclose(cc, c, rtol=0, atol=1e-9)
@@ -131,7 +133,7 @@ def test_stage1_smoke_one_step_finite() -> None:
     phi_m = 0.2 + 0.05 * jax.random.normal(k1, (n, n), dtype=jnp.float64)
     phi_c = 0.2 + 0.05 * jax.random.normal(k2, (n, n), dtype=jnp.float64)
     c = 0.35 * jnp.ones((n, n), dtype=jnp.float64)
-    (pm, pc, cc), _ = imex_step((phi_m, phi_c, c), geom, prm, 1e-4)
+    (pm, pc, cc), _pair = imex_step((phi_m, phi_c, c), geom, prm, 1e-4)
     assert jnp.all(jnp.isfinite(pm))
     assert jnp.all(jnp.isfinite(pc))
     assert jnp.all(jnp.isfinite(cc))
@@ -158,7 +160,7 @@ def test_silica_mass_weighted_by_chi_conserved_stage2() -> None:
     dx = L / n
     chi = geom.chi
     before = jnp.sum(chi * (c + prm.rho_m * phi_m + prm.rho_c * phi_c)) * (dx * dx)
-    (pm, pc, cc), _ = imex_step((phi_m, phi_c, c), geom, prm, 5e-4)
+    (pm, pc, cc), _pair = imex_step((phi_m, phi_c, c), geom, prm, 5e-4)
     after = jnp.sum(chi * (cc + prm.rho_m * pm + prm.rho_c * pc)) * (dx * dx)
     assert float(jnp.abs(after - before)) < 1e-10
 
@@ -191,7 +193,7 @@ def test_mass_conservation_closed_system_stage2() -> None:
 
     mass_0 = integral(state)
     for _ in range(10):
-        state, _ = imex_step(state, geom, prm, dt=0.001)
+        state, _pair = imex_step(state, geom, prm, dt=0.001)
     mass_final = integral(state)
     rel_err = jnp.abs(mass_final - mass_0) / jnp.maximum(jnp.abs(mass_0), 1e-30)
     assert float(rel_err) < 1e-10
@@ -248,7 +250,7 @@ def test_mass_conservation_closed_system_stage2_with_psi_stress() -> None:
 
     mass_0 = integral(state)
     for _ in range(10):
-        state, _ = imex_step(state, geom, prm, dt=0.001)
+        state, _pair = imex_step(state, geom, prm, dt=0.001)
     mass_final = integral(state)
     rel_err = jnp.abs(mass_final - mass_0) / jnp.maximum(jnp.abs(mass_0), 1e-30)
     assert float(rel_err) < 1e-10
@@ -286,7 +288,7 @@ def test_mass_conservation_closed_system_with_reaction() -> None:
 
     mass_0 = total_silica(state)
     for _ in range(10):
-        state, _ = imex_step(state, geom, prm, dt=0.001)
+        state, _pair = imex_step(state, geom, prm, dt=0.001)
     mass_final = total_silica(state)
     rel_err = jnp.abs(mass_final - mass_0) / jnp.maximum(jnp.abs(mass_0), 1e-30)
     assert float(rel_err) < 1e-10

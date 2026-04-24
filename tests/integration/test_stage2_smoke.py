@@ -52,7 +52,10 @@ def test_agate_stage2_smoke_short_run() -> None:
     assert var_final > 0.01
 
     assert "structure_factor" in result.diagnostics or "coarsening_metrics" in result.diagnostics
-    assert "option_b_leak_pct" not in result.diagnostics
+    assert "dirichlet_mass_balance" in result.diagnostics
+    dmb = result.diagnostics["dirichlet_mass_balance"]
+    assert float(dmb["cumulative_injection"]) == pytest.approx(0.0, abs=1e-20)
+    assert float(dmb["residual_pct"]) < 1.0
     assert "n_bands" not in result.diagnostics
 
     assert result.config_resolved["experiment"]["name"] == "smoke_stage2"

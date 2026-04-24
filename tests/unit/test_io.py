@@ -118,8 +118,7 @@ def test_plot_fields_final_writes_png(tmp_path: Path) -> None:
     pm = rng.random((n, n))
     pc = rng.random((n, n))
     cc = rng.random((n, n))
-    ch = np.ones((n, n))
-    out = plot_fields_final(pm, pc, cc, L=L, R=0.2, path=tmp_path, chi=ch)
+    out = plot_fields_final(pm, pc, cc, L=L, R=0.2, path=tmp_path)
     assert out.name == "figures_final.png"
     assert out.is_file()
     baseline_sz = out.stat().st_size
@@ -132,7 +131,6 @@ def test_plot_fields_final_writes_png(tmp_path: Path) -> None:
         L=L,
         R=0.2,
         path=tmp_path / "titled.png",
-        chi=ch,
         title="test_run — 2026-04-24 12:00 UTC",
         include_params_panel=False,
     )
@@ -154,7 +152,13 @@ def test_plot_fields_final_includes_params_panel(tmp_path: Path) -> None:
         "stress": {"mode": "none", "sigma_0": 0.0, "stress_coupling_B": 0.0},
         "time": {"dt": 0.01, "T": 1.0},
         "_diagnostics": {
-            "option_b_leak_pct": 0.42,
+            "spectral_mass_drift": {"leak_pct": 1.2e-6},
+            "dirichlet_mass_balance": {"residual_pct": 0.05, "ratio": 1.002},
+            "surface_flux_balance": {
+                "leak_pct": 0.58,
+                "n_samples": 42,
+                "front_arrival_t": 88.0,
+            },
             "jab_canonical": {"n_bands": 15, "q_cv": 0.12},
             "wall_time_s": 123.4,
         },

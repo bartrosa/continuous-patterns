@@ -183,8 +183,8 @@ def imex_step(
     geom: Geometry,
     prm: SimParams,
     dt: float,
-) -> tuple[tuple[Array, Array, Array], Array]:
-    """Advance ``(φ_m, φ_c, c)`` by one IMEX step of length ``dt``.
+) -> tuple[tuple[Array, Array, Array], tuple[Array, Array]]:
+    r"""Advance ``(φ_m, φ_c, c)`` by one IMEX step of length ``dt``.
 
     Step order
     ----------
@@ -216,9 +216,12 @@ def imex_step(
     Returns
     -------
     tuple
-        ``((phi_m', phi_c', c'), delta_pair)`` where ``delta_pair`` is a length-2
-        vector reserved for rim-flux bookkeeping (zeros when ``dirichlet_active``
-        is ``False`` or not yet wired).
+        ``((phi_m', phi_c', c'), (delta_pair, injection_this_step))`` where
+        ``injection_this_step`` is the scalar
+        $\sum \chi\,(c_{\mathrm{after}} - c_{\mathrm{before}})\,\Delta x^2$
+        from the rim Dirichlet projection (zero when ``dirichlet_active`` is
+        ``False``), matching the cavity-weighted silica integral. ``delta_pair`` is a
+        length-2 vector reserved for legacy bookkeeping (zeros).
     """
     if dt <= 0:
         raise ValueError(f"dt must be positive, got {dt}")
@@ -260,12 +263,15 @@ def imex_step(
     phi_m_new = phi_m_new + dt * chi * psi_m * G
     phi_c_new = phi_c_new + dt * chi * psi_c * G
 
+    c_before_rim = c_new
     c_new = jax.lax.cond(
         jnp.asarray(prm.dirichlet_active),
         lambda z: (1.0 - geom.ring) * z + geom.ring * jnp.asarray(prm.c0, dtype=z.dtype),
         lambda z: z,
         c_new,
     )
+    dx_arr = jnp.asarray(geom.dx, dtype=c_new.dtype)
+    injection_this_step = jnp.sum(geom.chi * (c_new - c_before_rim)) * (dx_arr * dx_arr)
 
     lo = jnp.asarray(-0.05, dtype=phi_m_new.dtype)
     hi = jnp.asarray(1.05, dtype=phi_m_new.dtype)
@@ -273,4 +279,4 @@ def imex_step(
     phi_c_new = jnp.clip(phi_c_new, lo, hi)
 
     delta_pair = jnp.zeros((2,), dtype=c_new.dtype)
-    return (phi_m_new, phi_c_new, c_new), delta_pair
+    return (phi_m_new, phi_c_new, c_new), (delta_pair, injection_this_step)

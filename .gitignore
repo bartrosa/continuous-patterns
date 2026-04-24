@@ -194,6 +194,7 @@ results/agate_stage2/
 !results/agate_stage2/README.md
 papers/*
 archive/*
+flux_inspect/*
 
 # Ruff stuff:
 .ruff_cache/

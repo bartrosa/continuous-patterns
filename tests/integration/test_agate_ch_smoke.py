@@ -36,8 +36,8 @@ def test_agate_ch_smoke_short_run(tmp_path: Path) -> None:
         "time": {"dt": 0.01, "T": 5.0, "snapshot_every": 100},
         "output": {
             "save_final_state": True,
-            "flux_sample_dt": 2.0,
-            "record_spectral_mass_diagnostic": False,
+            "flux_sample_dt": 0.5,
+            "record_spectral_mass_diagnostic": True,
         },
     }
 
@@ -50,6 +50,24 @@ def test_agate_ch_smoke_short_run(tmp_path: Path) -> None:
     assert jnp.all(jnp.isfinite(result.state_final.phi_c))
     assert jnp.all(jnp.isfinite(result.state_final.c))
 
-    assert "option_b_leak_pct" in result.diagnostics or "flux_samples" in result.meta
+    assert "dirichlet_mass_balance" in result.diagnostics
+    assert "surface_flux_balance" in result.diagnostics
+    assert "spectral_mass_drift" in result.diagnostics
+
+    dmb = result.diagnostics["dirichlet_mass_balance"]
+    assert isinstance(dmb, dict) and "residual_pct" in dmb
+    assert float(dmb["residual_pct"]) == float(dmb["residual_pct"])  # finite
+
+    sfb = result.diagnostics["surface_flux_balance"]
+    assert isinstance(sfb, dict) and "leak_pct" in sfb
+    assert float(sfb["leak_pct"]) == float(sfb["leak_pct"])  # finite
+
+    smd = result.diagnostics["spectral_mass_drift"]
+    assert isinstance(smd, dict) and "leak_pct" in smd
+    assert float(smd["leak_pct"]) < 1e-2
+
+    fs = result.meta.get("flux_samples", {})
+    assert "M_dissolved" in fs and "flux_rate" in fs and "phi_pack_rfix" in fs
+    assert "c_in_circle" in fs and "c_out_circle" in fs
 
     assert result.config_resolved["experiment"]["name"] == "smoke_test"

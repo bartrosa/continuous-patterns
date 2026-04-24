@@ -137,7 +137,6 @@ def run_one(
                 c=np.asarray(result.state_final.c),
                 L=float(gcfg["L"]),
                 R=float(gcfg.get("R", 0.0)),
-                chi=None,
                 title=fig_title,
                 params=params_for_panel,
                 include_params_panel=include_panel,

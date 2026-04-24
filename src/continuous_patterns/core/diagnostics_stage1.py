@@ -14,8 +14,80 @@ import numpy as np
 from scipy import ndimage, signal, stats
 
 # ---------------------------------------------------------------------------
-# Option B (PHYSICS §10.1)
+# Option B / surface flux — v1-style circle sampling (PHYSICS §10.3)
 # ---------------------------------------------------------------------------
+
+
+def bilinear_sample_field(
+    field: np.ndarray,
+    L: float,
+    x_s: np.ndarray,
+    y_s: np.ndarray,
+) -> np.ndarray:
+    """Bilinear interpolation at arbitrary ``(x, y)`` with periodic wrap.
+
+    ``field`` is ``(n, n)`` on ``[0, L)²`` with cell centres at ``((i+0.5) dx, (j+0.5) dx)``,
+    indices ``(i, j)`` matching :func:`cell_xy` (row ``i`` ↔ ``x``, column ``j`` ↔ ``y``).
+    """
+    n = int(field.shape[0])
+    if field.shape[1] != n:
+        raise ValueError("bilinear_sample_field expects a square (n, n) field")
+    dx = L / n
+    x_s = np.asarray(x_s, dtype=np.float64)
+    y_s = np.asarray(y_s, dtype=np.float64)
+    i_f = x_s / dx - 0.5
+    j_f = y_s / dx - 0.5
+    i0 = np.floor(i_f).astype(np.int64) % n
+    j0 = np.floor(j_f).astype(np.int64) % n
+    i1 = (i0 + 1) % n
+    j1 = (j0 + 1) % n
+    fi = i_f - np.floor(i_f)
+    fj = j_f - np.floor(j_f)
+    fi = np.clip(fi, 0.0, 1.0)
+    fj = np.clip(fj, 0.0, 1.0)
+    return (
+        (1.0 - fi) * (1.0 - fj) * field[i0, j0]
+        + (1.0 - fi) * fj * field[i0, j1]
+        + fi * (1.0 - fj) * field[i1, j0]
+        + fi * fj * field[i1, j1]
+    )
+
+
+def azimuthal_mean_at_radius_numpy(
+    c_field: np.ndarray,
+    *,
+    L: float,
+    r_abs: float,
+    n_theta: int = 360,
+) -> float:
+    """Azimuthal mean on a circle of radius ``r_abs`` about ``(L/2, L/2)`` via bilinear sampling."""
+    xc = 0.5 * float(L)
+    yc = 0.5 * float(L)
+    theta = np.linspace(0.0, 2.0 * math.pi, n_theta, endpoint=False)
+    x_s = xc + float(r_abs) * np.cos(theta)
+    y_s = yc + float(r_abs) * np.sin(theta)
+    vals = bilinear_sample_field(np.asarray(c_field, dtype=np.float64), L, x_s, y_s)
+    return float(np.mean(vals))
+
+
+def dissolved_mass_disk_numpy(
+    c: np.ndarray,
+    *,
+    L: float,
+    r_disk: float,
+) -> float:
+    """Integral of dissolved ``c`` over ``r < r_disk`` (hard disk, **no** ``χ`` weight)."""
+    n = int(c.shape[0])
+    dx = L / n
+    xc = 0.5 * float(L)
+    yc = 0.5 * float(L)
+    ii = np.arange(n, dtype=np.float64)[:, None]
+    jj = np.arange(n, dtype=np.float64)[None, :]
+    xv = (ii + 0.5) * dx
+    yv = (jj + 0.5) * dx
+    rv = np.sqrt((xv - xc) ** 2 + (yv - yc) ** 2)
+    mask = rv < float(r_disk)
+    return float(np.sum(np.asarray(c) * mask) * dx * dx)
 
 
 def option_b_residual_pct(
@@ -32,7 +104,7 @@ def option_b_residual_pct(
 
 
 def option_b_leak_pct_from_meta(meta: dict[str, Any], cfg: dict[str, Any]) -> float:
-    """Option B leak % from integration metadata (PHYSICS §10.1).
+    """Option B leak % from integration metadata (PHYSICS §10.3).
 
     Reads ``dissolved_mass_delta`` and ``flux_time_integral`` from ``meta``.
     ``cfg`` is reserved for future overrides (e.g. ``r_fix``, ``D_c``).
@@ -45,7 +117,7 @@ def option_b_leak_pct_from_meta(meta: dict[str, Any], cfg: dict[str, Any]) -> fl
 
 
 # ---------------------------------------------------------------------------
-# χ-weighted silica (PHYSICS §10.3)
+# χ-weighted silica (PHYSICS §10.4)
 # ---------------------------------------------------------------------------
 
 

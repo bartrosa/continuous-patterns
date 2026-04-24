@@ -59,6 +59,20 @@ def test_laplacian_sine_eigenmode_x_float32(p: int) -> None:
     assert float(err) < 1e-4
 
 
+@pytest.mark.parametrize("p", [1, 2, 3])
+def test_spectral_gradient_sign_cos_kx(p: int) -> None:
+    r"""``\partial/\partial x \cos(k x) = -k \sin(k x)`` via ``kx_wave`` / FFT."""
+    L, n = 10.0, 64
+    kx_val = 2.0 * jnp.pi * p / L
+    x, _ = _cell_centred_xy(L=L, n=n)
+    u = jnp.cos(kx_val * x).astype(jnp.float64)
+    _, _, _, kx_wave, ky_wave, _ = k_vectors(L=L, n=n)
+    gx, gy = grad_real(u, kx_wave, ky_wave)
+    expected_gx = (-kx_val * jnp.sin(kx_val * x)).astype(jnp.float64)
+    assert jnp.allclose(gx, expected_gx, rtol=1e-11, atol=1e-11)
+    assert jnp.allclose(gy, jnp.zeros_like(gy), rtol=1e-11, atol=1e-11)
+
+
 @pytest.mark.parametrize("axis", ["x", "y"])
 def test_gradient_sine_matches_analytic_float64(axis: str) -> None:
     """Gradients of low-mode sines match analytic derivatives at float64 (float32 redundant)."""

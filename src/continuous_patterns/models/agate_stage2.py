@@ -7,8 +7,9 @@ Uses the same :func:`continuous_patterns.core.imex.imex_step` with
 Differences from Stage I (:mod:`continuous_patterns.models.agate_ch`):
 
 - **No** ``flux_samples`` in ``meta`` (no rim / Option B dense path).
-- **Diagnostics** are bulk-only: structure factor, coarsening / interface metrics —
-  no ``option_b_leak_pct``, Jabłczyński, or cavity-only scalars at top level.
+- **Diagnostics** are bulk-only: structure factor, coarsening / interface metrics,
+  plus ``dirichlet_mass_balance`` (injection tracking; zero injection here) —
+  no Jabłczyński or cavity-only scalars at top level.
 - **Initial phases** are **not** ``χ``-masked (full torus).
 - ``c`` is inert when ``G=0`` but still evolved by diffusion if ``D_c>0``; default
   IC is uniform zeros or ``physics.c_0``.
@@ -219,17 +220,36 @@ def _append_snapshot_bulk(
 def _assemble_diagnostics_s2(
     state: tuple[Array, Array, Array],
     geom: Geometry,
+    prm: SimParams,
+    meta: dict[str, Any],
 ) -> dict[str, Any]:
     pm = np.asarray(state[0])
     pc = np.asarray(state[1])
     L = float(geom.L)
     psi = pm - pc
-    return {
+    out: dict[str, Any] = {
         "structure_factor": structure_factor_radial_average(psi, L=L),
         "bulk_stats_final": bulk_scalar_stats(pm, pc),
         "interface_density": interface_density(pm, pc, L=L),
         "coarsening_metrics": coarsening_metrics(pm, pc, L=L),
     }
+    if "M_total_initial" in meta and "cumulative_dirichlet_injection" in meta:
+        mi = float(meta["M_total_initial"])
+        mf = float(meta["M_total_final"])
+        inj = float(meta["cumulative_dirichlet_injection"])
+        d_m = mf - mi
+        resid = d_m - inj
+        denom = max(abs(mi), abs(mf), abs(d_m), abs(inj), 1e-30)
+        out["dirichlet_mass_balance"] = {
+            "M_total_initial": mi,
+            "M_total_final": mf,
+            "cumulative_injection": inj,
+            "mass_change": d_m,
+            "residual": resid,
+            "residual_pct": float(100.0 * abs(resid) / denom),
+            "ratio": float(d_m / inj) if abs(inj) > 1e-30 else float("nan"),
+        }
+    return out
 
 
 def simulate(
@@ -266,11 +286,22 @@ def simulate(
     ic = build_initial_state(cfg, geom, prm, k_ic)
     state = (ic.phi_m, ic.phi_c, ic.c)
 
+    chi_np = np.asarray(jax.device_get(geom.chi))
+    dx_np = float(geom.dx)
+    pm0 = np.asarray(jax.device_get(state[0]))
+    pc0 = np.asarray(jax.device_get(state[1]))
+    c0_arr = np.asarray(jax.device_get(state[2]))
+    m_total_initial = float(
+        np.sum(chi_np * (c0_arr + float(prm.rho_m) * pm0 + float(prm.rho_c) * pc0)) * dx_np * dx_np
+    )
+    cumulative_injection = 0.0
+
     meta: dict[str, Any] = {
         "chunk_size": chunk_size,
         "n_steps": n_total,
         "snapshots": [],
         "stage": "agate_stage2",
+        "M_total_initial": m_total_initial,
     }
 
     snap_every = int(tcfg.get("snapshot_every", 10**9))
@@ -298,7 +329,8 @@ def simulate(
             n_run = min(chunk_size, target - current_step)
             if n_run <= 0:
                 n_run = min(chunk_size, n_total - current_step)
-            state = run_chunk(state, n_run)
+            state, chunk_inj = run_chunk(state, n_run)
+            cumulative_injection += float(np.asarray(jax.device_get(chunk_inj)))
             current_step += n_run
             pbar.update(n_run)
             pbar.set_postfix_str(f"t={current_step * dt:.3f}")
@@ -334,8 +366,17 @@ def simulate(
         wall_time,
         t_final,
     )
+    pm_f = np.asarray(jax.device_get(state[0]))
+    pc_f = np.asarray(jax.device_get(state[1]))
+    c_f = np.asarray(jax.device_get(state[2]))
+    m_total_final = float(
+        np.sum(chi_np * (c_f + float(prm.rho_m) * pm_f + float(prm.rho_c) * pc_f)) * dx_np * dx_np
+    )
+    meta["M_total_final"] = m_total_final
+    meta["cumulative_dirichlet_injection"] = cumulative_injection
+
     state_final = SimState(phi_m=state[0], phi_c=state[1], c=state[2], t=t_final)
-    diagnostics = _assemble_diagnostics_s2(state, geom)
+    diagnostics = _assemble_diagnostics_s2(state, geom, prm, meta)
     return SimResult(
         state_final=state_final,
         meta=meta,

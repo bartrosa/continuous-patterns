@@ -41,7 +41,7 @@ $$
 
 where $\psi_m$, $\psi_c$ are **Ostwald partition factors** (Section 3) satisfying $\psi_m + \psi_c = 1$, and $G \ge 0$ is the **precipitation rate** (Section 3). Thus silica leaves the solution ($-G$ in $c$) and partitions between the two solid phases according to $(\psi_m,\psi_c)$.
 
-**Silica bookkeeping:** bulk silica density is taken as $c + \rho_m \phi_m + \rho_c \phi_c$ with stoichiometric weights $\rho_m$, $\rho_c$ (often unity). Diagnostics integrate this combination over the cavity indicator $\chi$ (Section 6) to monitor mass balance against boundary flux models (“Option B” in code).
+**Silica bookkeeping:** bulk silica density is taken as $c + \rho_m \phi_m + \rho_c \phi_c$ with stoichiometric weights $\rho_m$, $\rho_c$ (often unity). Diagnostics integrate this combination over the cavity indicator $\chi$ (Section 6) to monitor mass balance (Section **10.2** Option C — Dirichlet injection; **10.3** Option B — surface flux budget; **10.1** Option D — spectral aux).
 
 ---
 
@@ -120,7 +120,7 @@ $$
 \phi_\alpha \in [-0.05,\, 1.05], \qquad \alpha \in \{m,c\},
 $$
 
-immediately following the inverse FFT that recovers $\phi_\alpha$ from the implicit update. This is **not** a smooth projection: it is a **numerical guardrail** that can **inject or remove** a tiny amount of “phase volume” if a field would otherwise leave the interval (mass within the strict variational formulation is therefore not exact at machine level). In practice the **barrier forces** and typical amplitudes keep $\phi$ near $[0,1]$, so the clip rarely differs from a smooth confinement; **global silica budgets** are still checked with **Option B** (Section 10) rather than by assuming exact invariance under clipping.
+immediately following the inverse FFT that recovers $\phi_\alpha$ from the implicit update. This is **not** a smooth projection: it is a **numerical guardrail** that can **inject or remove** a tiny amount of “phase volume” if a field would otherwise leave the interval (mass within the strict variational formulation is therefore not exact at machine level). In practice the **barrier forces** and typical amplitudes keep $\phi$ near $[0,1]$, so the clip rarely differs from a smooth confinement; **global silica budgets** are still checked with **Option C** (Section 10.2) and related diagnostics rather than by assuming exact invariance under clipping.
 
 ---
 
@@ -143,7 +143,7 @@ $$
 
 so that $\delta\mu_m^{\mathrm{stress}} - \delta\mu_c^{\mathrm{stress}} = \mu_{\mathrm{stress}}$, matching $\delta \mathcal{F}_{\mathrm{stress}} / \delta \psi$ for the free-energy density quadratic in $\nabla \psi$. The Cahn–Hilliard fluxes then apply $M_\alpha \nabla^2 \mu_\alpha$ to these full $\mu_\alpha$.
 
-**Mass conservation (structural):** the divergence form $-B\nabla\cdot(\sigma\nabla\psi)$ is the variational derivative of a **gradient–gradient** coupling in $\psi$; when $\sigma$ is symmetric and boundary / mask handling is consistent, this is the standard route to avoid spurious source terms in the **pair** $(\phi_m,\phi_c)$ relative to the chosen $\psi$-energy (discrete conservation additionally depends on periodicity, mask projection of $\phi$ inside the cavity, rim silica exchange, and the hard clip in Section 4 — monitored numerically via “Option B” surface flux budgeting).
+**Mass conservation (structural):** the divergence form $-B\nabla\cdot(\sigma\nabla\psi)$ is the variational derivative of a **gradient–gradient** coupling in $\psi$; when $\sigma$ is symmetric and boundary / mask handling is consistent, this is the standard route to avoid spurious source terms in the **pair** $(\phi_m,\phi_c)$ relative to the chosen $\psi$-energy (discrete conservation additionally depends on periodicity, mask projection of $\phi$ inside the cavity, rim silica exchange, and the hard clip in Section 4 — monitored numerically via **Option C** in Section 10.2).
 
 **Numerical branch:** if `stress_coupling_B` is zero or the tensor is numerically zero, the code takes the **legacy** Laplacian path without recomputing stress derivatives (JIT-friendly `cond`).
 
@@ -177,9 +177,13 @@ with default $\varepsilon_\chi = 2$ (`eps_scale` in code). Thus $\chi \approx 1$
 
 **Dirichlet ring for $c$:** a **normalized Gaussian** mask centred on $r \approx R$, with **unit peak**, enforces rim values of $c$ (scalar $c_0$ or vertical ramp with `c0_alpha` for gravity-rim experiments). **Implementation:** `ring = exp(-½((r-R)/σ)²) / max(...)` with $\sigma = \texttt{eps\_scale} \cdot \Delta x$, again floored as $\sigma = \max(\texttt{eps\_scale} \cdot \Delta x,\, \Delta x)$ in code. **No hard threshold** is applied — the smooth form is JIT-friendly and the numerical tail beyond $\sim 5\sigma$ is indistinguishable from zero. **Not** a sharp variational Dirichlet line — a **smooth ring mask** in the discrete equations.
 
-**Accounting annulus:** a thin shell $R - 2\Delta x \le r < R$ is used for flux diagnostics (rim-adjacent bookkeeping).
+**Initial conditions for $c$:** the cavity interior is initialised at $c = c_{\mathrm{sat}}$ (no uniform supersaturation at $t=0$); the rim Dirichlet ring then actively enforces $c \approx c_0$ in the narrow annulus each step, supporting a diffusive gradient rim→interior that drives front propagation. Override the interior level via the YAML key `initial.c_init` for special tests (e.g. uniform supersaturation).
 
-**Interpolation on circles (flux sampling):** when estimating $c$ (or related fields) on circles used for **Option B** — e.g. at radii $r_{\mathrm{fix}} \pm \Delta x$ for a finite-difference $\partial c/\partial r$ — values are sampled from the **cell-centred** periodic grid using **`scipy.ndimage.map_coordinates(..., order=1)`** (bilinear index interpolation) at fractional indices corresponding to $(x/\Delta x - \tfrac{1}{2},\, y/\Delta x - \tfrac{1}{2})$.
+**Outside cavity ($\chi \approx 0$):** $c$ is initialised at **zero**. Physically, this represents solid rock with no dissolved silica reservoir. The rim Dirichlet ring models the single silica delivery channel from hydrothermal flow through wall fissures. Setting $c_{\mathrm{outside}} = 0$ instead of $c_0$ eliminates an artifact of the periodic-FFT solver, where a large outside reservoir would leak diffusively into the cavity across periodic boundaries and complicate mass balance accounting (see §10.2).
+
+**Accounting annulus:** a thin shell $R - 2\Delta x \le r < R$ is reserved for rim-adjacent mask bookkeeping in the geometry builders.
+
+**Option B (§10.3) sampling:** $c$ on circles at fixed radius uses **bilinear** interpolation of the cell-centred grid with **periodic wrap** (``bilinear_sample_field``), then an azimuthal mean over **360** uniformly spaced angles. The radial derivative at $r_{\mathrm{fix}}$ uses a **$2\Delta x$** central difference between circles at $r_{\mathrm{fix}} \pm \Delta x$ (same bilinear pipeline) — **not** thin shell bin-averages on the grid, which alias narrow agate bands ($\sim 2\Delta x$) into azimuthal noise.
 
 ### 6.2 Stage II — pure Cahn–Hilliard relaxation (separate model)
 
@@ -325,53 +329,65 @@ These are **empirical** stability boundaries from short scans (e.g. `stability_s
 
 ---
 
-## 10. Diagnostics (what we measure and how)
+## 10. Numerical validation
 
-This section lists **primary** diagnostics used in runs, sweeps, and paper-facing figures. All are **post-processed** from saved fields unless noted.
+Three independent mass-balance diagnostics are computed for every production Stage I run and reported in `summary.json`. Additional figure-facing metrics follow in §10.4+. All are **post-processed** from saved fields unless noted.
 
-### 10.1 Option B — surface-flux mass balance (dissolved silica budget)
+### 10.1 Spectral kernel conservation (Option D)
 
-**Goal:** test whether **dissolved silica** inside a fixed measurement cylinder $r < r_{\mathrm{fix}}$ is consistent with **Fickian flux** through a control surface at $r_{\mathrm{fix}}$.
+**Goal:** isolate **FFT + IMEX** drift on a **simplified** periodic problem: $\chi \equiv 1$, **no** rim Dirichlet, **no** reaction ($G \equiv 0$), and an **off-centre Gaussian** in $c$ only with $\phi_m = \phi_c = 0$.
 
-**Method (dense path):** during integration, at intervals `flux_sample_dt` (default $2.0$ time units, independent of snapshot cadence), the code estimates $D_c\,\partial c/\partial r$ at $r_{\mathrm{fix}} \pm \Delta x$ from azimuthal means, multiplies by $2\pi r_{\mathrm{fix}}$ for perimeter, and **trapezoid-integrates** the resulting flux rate in time until a **precipitation front** criterion is met: azimuthal mean of $\phi_m + \phi_c$ at $r_{\mathrm{fix}}$ exceeds a threshold (defaults: $r_{\mathrm{fix}} = 0.75\,R$, threshold $0.3$). The **relative residual** (“Option B leak %”) compares the change in **dissolved** silica mass in $r < r_{\mathrm{fix}}$ to the time-integrated flux.
+**Method:** when `output.record_spectral_mass_diagnostic` is **true**, the driver runs a **short** auxiliary trajectory (defaults: `spectral_mass_T = 1.0`, `spectral_mass_dt = 0.01` ⇒ **100** steps; overridable via `output`). The same `imex_step` kernel advances $(\phi_m,\phi_c,c)$ on the full $L\times L$ torus.
 
-**Interpretation:** small Option B residual supports that **rim exchange + diffusion** are numerically consistent with the **dissolved** silica drawer; it does **not** by itself prove full multi-phase thermodynamic equilibrium.
+**Output:** `spectral_mass_drift` with **`leak_pct`** $= 100\,|M_{\mathrm{final}} - M_{\mathrm{initial}}| / \max(|M_{\mathrm{initial}}|,\varepsilon)$ for $M = \iint (c + \rho_m\phi_m + \rho_c\phi_c)\,\mathrm{d}A$.
 
-### 10.2 Option D / spectral mass diagnostic (“spectral drift %”)
+**Expected:** $|\texttt{leak\_pct}| \ll 0.1\%$ in **fp64**; **$\sim 10^{-5}$–$10^{-7}\%$** order in **fp32**; v1 reported $\sim 1.7\times 10^{-7}\%$ in fp64.
 
-**Goal:** isolate **FFT + IMEX** drift on a **simplified** periodic problem without cavity Dirichlet.
+### 10.2 Full-scheme Dirichlet accounting (Option C)
 
-**Method (legacy specification):** a **separate short** simulation (not the main trajectory) with:
+**Goal:** track per-step Dirichlet injection (**χ-weighted** change in $c$ from the rim blend toward $c_0$) and compare cumulative injection to $\Delta M_{\mathrm{tot}}$ for $M_{\mathrm{tot}} = \iint \chi\,(c + \rho_m\phi_m + \rho_c\phi_c)\,\mathrm{d}A$.
 
-- **`disable_dirichlet: true`** — no rim replenishment of $c$.
-- **Initial condition:** **blob** mode — a χ-windowed **off-centre Gaussian** in $c$ only, with **$\phi_m = \phi_c = 0$** (dissolved-silica bump on the periodic torus).
-- **No χ projection** of $(\phi_m,\phi_c,c)$ after each step in this auxiliary run, so the state evolves as **periodic spectral CH + diffusion** on the **full** grid (no cavity masking in the diagnostic kernel).
-- **Horizon (defaults):** **`T = 1.0`** time units at **`dt = 0.01`** ⇒ **100** steps unless overridden by YAML keys such as `spectral_mass_T`, `spectral_mass_dt`, `spectral_mass_snapshot_every`.
-- **Precision:** run with **`jax_enable_x64 = true`** for sensitivity to tiny drift.
-- **Series:** at each diagnostic snapshot, record the **full-domain** integral of total silica $c + \rho_m \phi_m + \rho_c \phi_c$ (no cavity mask).
-- **Output:** **`leak_pct` = $100 \times (M_{\mathrm{final}} - M_{\mathrm{initial}}) / \max(|M_{\mathrm{initial}}|, \varepsilon)$**; expect **$|\mathrm{leak\_pct}| \ll 0.1\%$** near floating-point roundoff when the operator is clean. Stored in `summary.json` under **`spectral_mass_conservation`** (or legacy alias). Enable on the main run card with **`record_spectral_mass_diagnostic: true`**.
+**Construction:** before the rim blend, $c_{\mathrm{pre}}$ is the field after diffusion and cavity masking; after, $c_{\mathrm{post}} = (1-\texttt{ring})\,c_{\mathrm{pre}} + \texttt{ring}\,c_0$. The injected scalar that step is $\Delta m_{\mathrm{inject}} = \sum \chi\,(c_{\mathrm{post}} - c_{\mathrm{pre}})\,\Delta x^2$.
 
-**Interpretation:** this is a **stiffness / operator** sanity check, **not** a substitute for Option B on the full agate cavity run (spectral diagnostic is **auxiliary** to the main trajectory).
+**Output:** `dirichlet_mass_balance` (`residual_pct`, `ratio` $=\Delta M/\sum\Delta m_{\mathrm{inject}}$, …).
 
-### 10.3 χ-weighted cavity silica windows (`main_silica_window_drifts`)
+**Caveat:** smooth $\chi$ projection and the hard $\phi$ clip $[-0.05,\,1.05]$ introduce **bounded** residuals that are **structural** to the discrete scheme. On live agate runs, `residual_pct` can sit in a **wide advisory band** (often tens of percent) while morphology remains acceptable — treat Option C as **diagnostic**, not a strict pass/fail gate, unless you establish a baseline on a controlled configuration. **Stage II** uses `dirichlet_active=False`, so injection is **zero** and $\Delta M_{\mathrm{tot}}$ should be $\approx 0$ up to fp drift.
+
+### 10.3 Surface flux balance (Option B — v1 paper §3.2 method)
+
+**Goal:** at $r_{\mathrm{fix}} = \texttt{option\_b\_r\_fix\_frac}\cdot R$ (default **0.75**), compare $\int F\,\mathrm{d}t$ to $\Delta M_{\mathrm{dissolved}}$ over samples with $t \le t_{\mathrm{front}}$, where $t_{\mathrm{front}}$ is the first sample with azimuthal mean $(\phi_m + \phi_c) > 0.3$ on the $r_{\mathrm{fix}}$ circle (v1 default **0.3**).
+
+**Sampling (critical):** **bilinear** interpolation of $c$ on the cell-centred periodic grid at **360** angles on each circle — **not** bin-masking grid shells (which alias narrow $\sim 2\Delta x$ bands).
+
+**Gradient stencil:** **$2\Delta x$** central difference between azimuthal means at $r_{\mathrm{fix}} \pm \Delta x$; **flux rate** $F(t) = D_c \cdot \partial c/\partial r \cdot 2\pi r_{\mathrm{fix}}$ (v1 inflow sign).
+
+**Dissolved mass:** hard disk $r < r_{\mathrm{fix}}$, **no** $\chi$: $M_{\mathrm{dissolved}} = \iint_{r < r_{\mathrm{fix}}} c\,\mathrm{d}A$.
+
+**Residual:** **signed** `leak_pct` $= 100 \cdot (\Delta M_{\mathrm{dissolved}} - \int F\,\mathrm{d}t) / \max(|\text{initial}|,\,|\text{final}|,\,|\int F\,\mathrm{d}t|,\,10^{-30})$.
+
+**Output:** `surface_flux_balance` (`leak_pct`, `flux_integrated`, `dissolved_change`, `residual`, `n_samples`, `front_reached`, `front_arrival_t`, `r_fix`, …).
+
+**Expected:** $|\texttt{leak\_pct}| < 1\%$ typical, $< 5\%$ worst-case; v1 §3.2 worst-case **0.58%** over 13 configurations.
+
+### 10.4 χ-weighted cavity silica windows (`main_silica_window_drifts`)
 
 **Goal:** track **transient vs late** mass drift of **χ-weighted** cavity silica total $\int (c + \rho_m\phi_m + \rho_c\phi_c)\,\chi\,\mathrm{d}A$ over three **100-step** windows: early, mid-run, and final.
 
-**Interpretation:** complements Option B by summarizing **bulk silica inside the soft cavity** over the **main** run, including solid phases.
+**Interpretation:** complements **§10.1–10.3** mass headlines by summarizing **bulk silica inside the soft cavity** over the **main** run, including solid phases.
 
-### 10.4 FFT ψ-anisotropy ratio
+### 10.5 FFT ψ-anisotropy ratio
 
 **Goal:** classify **horizontal vs vertical** dominance of $\psi = \phi_m - \phi_c$ in the cavity.
 
 **Method:** compute $|FFT(\psi \cdot \chi_{\mathrm{disk}})|^2$ with a **hard** disk mask $r < R$, then form the ratio of low-$|k_x|$ band power to low-$|k_y|$ band power (threshold tied to domain size). Values $>1$ favour **horizontal** structure, $<1$ **vertical**, $\approx 1$ **isotropic** in this coarse metric.
 
-### 10.5 Pixel noise metric (stability scans)
+### 10.6 Pixel noise metric (stability scans)
 
 **Goal:** scalar **texture noise** on $\phi_m$ inside $r < R$: RMS of $\phi_m - \mathrm{uniform\_filter}_{3\times 3}(\phi_m)$ with **periodic** wrapping on the grid.
 
 **Interpretation:** used together with $\max(\phi_m + \phi_c)$ in empirical **STABLE / MARGINAL / UNSTABLE** classification for ψ-coupling calibration sweeps.
 
-### 10.6 Canonical-slice Jabłczyński metrics
+### 10.7 Canonical-slice Jabłczyński metrics
 
 **Geometry of the measurement:** **horizontal** centreline $y = L/2$, **right half** of the cavity ($x \ge L/2$), $\theta \approx 0$ ray in the radial sense used for **peak finding** in $\phi_c$ (fallback to $\phi_m$ if too few peaks).
 
@@ -379,23 +395,23 @@ This section lists **primary** diagnostics used in runs, sweeps, and paper-facin
 
 **Critical caveat:** this pipeline is **horizontal-slice-centric**. **Vertical** banding, **radial** Liesegang structure, or **labyrinth** dominance may yield **misleading $N_b$ or class labels** relative to a human eye on the 2D pattern — a **diagnostic limitation**, not a claim about what the PDE forbids.
 
-### 10.7 Multislice band count and persistence
+### 10.8 Multislice band count and persistence
 
 **Multislice count:** median over **8 angles** and both $(\phi_m,\phi_c)$ of peak counts along **right-half rays** through the cavity (see `count_bands_multislice` in code) — more isotropic than the single canonical slice, but still **ray-based**.
 
 **Persistence check:** compares **peak** multislice count time vs **final** multislice count to flag **band loss** vs **persistent** banding in post-processing.
 
-### 10.8 Additional figure-facing metrics
+### 10.9 Additional figure-facing metrics
 
-Examples: **moganite–chalcedony anticorrelation** on the horizontal centreline; **overshoot fraction** above physical packing; **radial profiles** of $\phi_m + \phi_c$; **kymograph** $(t,r_{\mathrm{peak}})$ from horizontal-line peaks. These support morphology narrative but are secondary to Sections 10.1–10.7 for mass and stability claims.
+Examples: **moganite–chalcedony anticorrelation** on the horizontal centreline; **overshoot fraction** above physical packing; **radial profiles** of $\phi_m + \phi_c$; **kymograph** $(t,r_{\mathrm{peak}})$ from horizontal-line peaks. These support morphology narrative but are secondary to Sections 10.4–10.8 for mass and stability claims.
 
-**Labyrinth heuristic (morphology tag):** a run may be flagged as **labyrinth-like** when the **median multislice** band count (Section 10.7) is **below a fixed threshold** (e.g. $< 10$ in the legacy implementation) **or** when **azimuthal variance** of the pattern on an intermediate-radius ring **dominates** the variance of the **azimuthally averaged** radial profile — i.e. tangential structure wins over purely radial banding in that diagnostic. This is a **post-process classifier**, not a separate PDE term.
+**Labyrinth heuristic (morphology tag):** a run may be flagged as **labyrinth-like** when the **median multislice** band count (Section 10.8) is **below a fixed threshold** (e.g. $< 10$ in the legacy implementation) **or** when **azimuthal variance** of the pattern on an intermediate-radius ring **dominates** the variance of the **azimuthally averaged** radial profile — i.e. tangential structure wins over purely radial banding in that diagnostic. This is a **post-process classifier**, not a separate PDE term.
 
-### 10.9 Known model / implementation limitations (summary)
+### 10.10 Known model / implementation limitations (summary)
 
 - **Barrier + hard clip** (Section 4): not a strict variational $\phi \in [0,1]$ surface-phase model.
 - **Kirsch mode** (Section 7.6): toy σ-field, not inclusion theory in the cavity.
-- **Canonical Jabłczyński** (Section 10.6): horizontal bias — do not over-interpret vertical textures through this scalar alone.
+- **Canonical Jabłczyński** (Section 10.7): horizontal bias — do not over-interpret vertical textures through this scalar alone.
 - **No elasticity / fluid pressure:** the model omits elastic strain energy and explicit fluid pressure beyond what is encoded in prescribed $\sigma_{ij}$ and $c$; there are **no** explicit sharp grain-boundary interfaces beyond diffuse interfaces.
 - **Ratchet** (Section 3): a **phenomenological** kinetic tilt of Ostwald partitioning in a band of $\phi_m$ — **not** a calibrated multi-mineral rate law.
 - **Dimensionless formulation:** all lengths, times, diffusivities, and reaction constants are **dimensionless** unless an explicit map to SI units is introduced elsewhere.
@@ -404,8 +420,8 @@ Examples: **moganite–chalcedony anticorrelation** on the horizontal centreline
 
 ## 11. Summary
 
-We solve a **reaction-coupled anisotropic Model C** system for $(c,\phi_m,\phi_c)$ in a periodic square with a **smooth circular cavity**, **rim Dirichlet** control of $c$, **double-well + outer barrier** for $\phi_\alpha$, optional **ratcheted Ostwald partitioning**, and optional **ψ-split stress coupling** $\mathcal{F}_{\mathrm{stress}} \propto (\nabla\psi)^\top \sigma (\nabla\psi)$ implemented as $\mu_{\mathrm{stress}} = -B\nabla\cdot(\sigma\nabla\psi)$ with the $(\pm\tfrac12)$ split between $(\phi_m,\phi_c)$. A separate **Stage II** bulk CH model removes reaction and cavity physics for long-time relaxation studies. **Pseudospectral IMEX** time stepping is used; **no explicit spectral dealiasing** is currently applied. **Empirical σ-limits**, **Phase 3 calibration**, **Option B**, and **ψ vs κ-anisotropy** distinctions should accompany any figure caption comparing mechanisms.
+We solve a **reaction-coupled anisotropic Model C** system for $(c,\phi_m,\phi_c)$ in a periodic square with a **smooth circular cavity**, **rim Dirichlet** control of $c$, **double-well + outer barrier** for $\phi_\alpha$, optional **ratcheted Ostwald partitioning**, and optional **ψ-split stress coupling** $\mathcal{F}_{\mathrm{stress}} \propto (\nabla\psi)^\top \sigma (\nabla\psi)$ implemented as $\mu_{\mathrm{stress}} = -B\nabla\cdot(\sigma\nabla\psi)$ with the $(\pm\tfrac12)$ split between $(\phi_m,\phi_c)$. A separate **Stage II** bulk CH model removes reaction and cavity physics for long-time relaxation studies. **Pseudospectral IMEX** time stepping is used; **no explicit spectral dealiasing** is currently applied. **Empirical σ-limits**, **Phase 3 calibration**, **mass diagnostics (§10.1–10.3)**, and **ψ vs κ-anisotropy** distinctions should accompany any figure caption comparing mechanisms.
 
 ---
 
-*Document version: post-NOTES merge — includes rim `map_coordinates` sampling, spectral-mass diagnostic defaults, labyrinth heuristic, and dimensionless-scope notes ported from legacy reviewer notes.*
+*Document version: post-NOTES merge — includes Option D/C/B mass validation (§10.1–10.3; Option B = v1 bilinear circle + $2\Delta x$ stencil), optional `map_coordinates` elsewhere, labyrinth heuristic, and dimensionless-scope notes ported from legacy reviewer notes.*

@@ -16,7 +16,7 @@ geometry:
 
 physics:
   W: 1.0
-  gamma: 3.0
+  gamma: 4.0  # was 3.0 — matches v1 canonical medium_pinning baseline
   kappa_x: 0.5
   kappa_y: 0.5
   M_m: 0.01

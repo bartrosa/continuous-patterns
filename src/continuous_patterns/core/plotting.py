@@ -56,15 +56,50 @@ def _format_config_text(params: dict[str, Any]) -> str:
 
 
 def _format_diagnostics_text(diagnostics: dict[str, Any] | None) -> str:
-    """Plain-text DIAGNOSTICS column for the params panel."""
-    lines = ["DIAGNOSTICS", ""]
+    """Plain-text DIAGNOSTICS column: mass balance block + morphology block."""
+    lines = ["MASS BALANCE:"]
     if diagnostics is None:
         lines.append("  (not provided)")
         return "\n".join(lines)
 
-    if "option_b_leak_pct" in diagnostics:
-        v = float(diagnostics["option_b_leak_pct"])
-        lines.append(f"  option_b_leak_pct:   {v:.3f}%")
+    sd = diagnostics.get("spectral_mass_drift", {})
+    if isinstance(sd, dict) and sd.get("leak_pct") is not None:
+        lines.append(f"  spectral_drift:      {float(sd['leak_pct']):.2e}%")
+    else:
+        lines.append("  spectral_drift:      (not recorded)")
+
+    dmb = diagnostics.get("dirichlet_mass_balance", {})
+    if isinstance(dmb, dict) and dmb.get("residual_pct") is not None:
+        lines.append(f"  dirichlet_residual:  {float(dmb['residual_pct']):.3f}%")
+        rto = dmb.get("ratio")
+        if rto is not None and rto == rto:
+            lines.append(f"  dirichlet_ratio:     {float(rto):.3f}")
+        else:
+            lines.append("  dirichlet_ratio:     (n/a)")
+    else:
+        lines.append("  dirichlet_residual:  (not recorded)")
+
+    sfb = diagnostics.get("surface_flux_balance", {})
+    if isinstance(sfb, dict) and sfb.get("leak_pct") is not None:
+        lp = float(sfb["leak_pct"])
+        ns = int(sfb.get("n_samples", 0))
+        ft = sfb.get("front_arrival_t", float("nan"))
+        lines.append(f"  surface_flux_leak:   {lp:+.3f}%")
+        lines.append(f"  surface_n_samples:   {ns:d}")
+        try:
+            ft_f = float(ft)
+            ft_ok = ft_f == ft_f
+        except (TypeError, ValueError):
+            ft_ok = False
+        if ft_ok:
+            lines.append(f"  surface_front_t:     {ft_f:.1f}")
+        else:
+            lines.append("  surface_front_t:     (not reached)")
+    else:
+        lines.append("  surface_flux_leak:   (not recorded)")
+
+    lines.append("")
+    lines.append("MORPHOLOGY:")
 
     jab = diagnostics.get("jab_canonical")
     if isinstance(jab, dict):
@@ -98,8 +133,6 @@ def _format_diagnostics_text(diagnostics: dict[str, Any] | None) -> str:
     if "wall_time_s" in diagnostics:
         lines.append(f"  wall_time:           {float(diagnostics['wall_time_s']):.1f}s")
 
-    if len(lines) == 2:
-        lines.append("  (no scalar metrics)")
     return "\n".join(lines)
 
 
@@ -110,24 +143,21 @@ def _plot_field_panels(
     pm: np.ndarray,
     pc: np.ndarray,
     cc: np.ndarray,
-    chi: np.ndarray | None,
     L: float,
     R: float,
     extent: tuple[float, float, float, float],
 ) -> None:
-    """Draw the four imshow panels on given axes (2×2 order)."""
-    ax_pm, ax_pc, ax_c, ax_chi = axes_grid
+    """Draw four imshow panels: φ_m, φ_c, φ_m+φ_c, c (2×2 row-major)."""
+    ax_pm, ax_pc, ax_sum, ax_c = axes_grid
     xc = 0.5 * L
     yc = 0.5 * L
+    phi_sum = pm + pc
     panels: list[tuple[Any, np.ndarray, str]] = [
         (ax_pm, pm, r"$\phi_m$"),
         (ax_pc, pc, r"$\phi_c$"),
+        (ax_sum, phi_sum, r"$\phi_m + \phi_c$"),
         (ax_c, cc, r"$c$"),
     ]
-    if chi is not None:
-        panels.append((ax_chi, chi, r"$\chi$"))
-    else:
-        ax_chi.axis("off")
 
     for ax, arr, panel_title in panels:
         im = ax.imshow(
@@ -160,13 +190,14 @@ def plot_fields_final(
     L: float,
     R: float,
     path: Path | str,
-    chi: np.ndarray | None = None,
     dpi: int = 120,
     title: str | None = None,
     params: dict[str, Any] | None = None,
     include_params_panel: bool = True,
 ) -> Path:
     """Save a 2×2 field panel (and optional suptitle + monospace params row) to PNG.
+
+    Panels are ``φ_m``, ``φ_c``, ``φ_m + φ_c`` (total crystalline fraction), and ``c``.
 
     If ``path`` ends with ``.png``, it is the output file. Otherwise ``path`` is
     treated as a directory and the file is ``path / "figures_final.png"``.
@@ -182,22 +213,28 @@ def plot_fields_final(
     pm = np.asarray(phi_m, dtype=np.float64)
     pc = np.asarray(phi_c, dtype=np.float64)
     cc = np.asarray(c, dtype=np.float64)
-    ch = np.asarray(chi, dtype=np.float64) if chi is not None else None
     extent = (0.0, float(L), 0.0, float(L))
 
     use_panel = bool(include_params_panel and params is not None)
 
     if use_panel:
-        fig = plt.figure(figsize=(9.0, 11.0), constrained_layout=True)
-        gs = gridspec.GridSpec(3, 2, figure=fig, height_ratios=[4.0, 4.0, 1.6])
+        fig = plt.figure(figsize=(9.0, 12.5), constrained_layout=True)
+        gs = gridspec.GridSpec(3, 2, figure=fig, height_ratios=[4.0, 4.0, 2.5])
         ax_pm = fig.add_subplot(gs[0, 0])
         ax_pc = fig.add_subplot(gs[0, 1])
-        ax_c = fig.add_subplot(gs[1, 0])
-        ax_chi = fig.add_subplot(gs[1, 1])
+        ax_phi_sum = fig.add_subplot(gs[1, 0])
+        ax_c = fig.add_subplot(gs[1, 1])
         ax_params = fig.add_subplot(gs[2, :])
         ax_params.axis("off")
         _plot_field_panels(
-            fig, (ax_pm, ax_pc, ax_c, ax_chi), pm=pm, pc=pc, cc=cc, chi=ch, L=L, R=R, extent=extent
+            fig,
+            (ax_pm, ax_pc, ax_phi_sum, ax_c),
+            pm=pm,
+            pc=pc,
+            cc=cc,
+            L=L,
+            R=R,
+            extent=extent,
         )
         if title:
             fig.suptitle(title, fontsize=12)
@@ -221,7 +258,7 @@ def plot_fields_final(
             diag_text,
             transform=ax_params.transAxes,
             fontfamily="monospace",
-            fontsize=9,
+            fontsize=8,
             verticalalignment="top",
             horizontalalignment="left",
         )
@@ -233,7 +270,6 @@ def plot_fields_final(
             pm=pm,
             pc=pc,
             cc=cc,
-            chi=ch,
             L=L,
             R=R,
             extent=extent,
