@@ -1,9 +1,10 @@
-"""Nested YAML loading (Pydantic v2), result paths, and artifact writers.
+"""Layered nested YAML loading (Pydantic v2), result paths, and artifact writers.
 
-Canonical on-disk layout under ``results/`` per ``docs/ARCHITECTURE.md`` §3.8
-and §5. No flat legacy config ingestion. Run cards are validated with typed
-nested models (``ExperimentSpec``, ``GeometrySpec``, …); ``physics`` and
-``initial`` remain plain dicts until model-specific schemas exist (§2.8).
+Merge order for ``load_run_config`` is documented in ``docs/ARCHITECTURE.md`` §10.
+Canonical on-disk layout under ``results/`` per §3.8 and §5. No flat legacy
+config ingestion. Run cards are validated with typed nested models
+(``ExperimentSpec``, ``GeometrySpec``, …); ``physics`` and ``initial`` remain
+plain dicts until model-specific schemas exist (§2.8).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import json
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib import resources
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,7 +25,7 @@ from continuous_patterns.core.plotting import plot_fields_final
 
 _MIGRATION_HINT = (
     "Flat or non-nested configs are not supported. Convert archived YAML to nested "
-    "templates (see docs/ARCHITECTURE.md §10, migration)."
+    "experiment cards under ``experiments/canonical/`` (see docs/ARCHITECTURE.md §10)."
 )
 
 
@@ -35,6 +37,7 @@ class ExperimentSpec(BaseModel):
     name: str = "run"
     model: Literal["agate_ch", "agate_stage2"]
     seed: int = 42
+    description: str | None = None
 
 
 class GeometrySpec(BaseModel):
@@ -86,7 +89,11 @@ class OutputSpec(BaseModel):
     save_final_state: bool = True
     flux_sample_dt: float | None = None
     record_spectral_mass_diagnostic: bool = False
+    record_evolution_gif: bool = False
+    gif_max_frames: int = Field(default=120, ge=8, le=500)
+    gif_fps: int = Field(default=10, ge=1, le=60)
     include_params_panel: bool = True
+    log_level: str = "INFO"
 
 
 class RunConfigValidated(BaseModel):
@@ -114,13 +121,61 @@ class ResultPaths:
     log_file: Path
 
 
-def load_run_config(path: Path) -> dict[str, Any]:
-    """Load and validate nested run YAML; reject flat or unknown top-level keys.
+_SOLVER_SETTINGS_DEFAULT = Path("experiments/solver_settings.yaml")
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge ``override`` into ``copy(base)``. Override wins on conflicts.
+
+    Dict values recurse; scalars and lists are replaced wholesale by ``override``.
+    """
+    out = dict(base)
+    for k, v in override.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _load_library_defaults() -> dict[str, Any]:
+    """Load bundled ``solver_defaults.yaml`` from package data."""
+    path = resources.files("continuous_patterns.defaults").joinpath("solver_defaults.yaml")
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    return data if isinstance(data, dict) else {}
+
+
+def _load_user_solver_settings(path: Path | None = None) -> dict[str, Any]:
+    """Load optional per-machine overrides from ``experiments/solver_settings.yaml``."""
+    p = path or _SOLVER_SETTINGS_DEFAULT
+    if not p.is_file():
+        return {}
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def load_run_config(
+    experiment_path: Path | str,
+    *,
+    user_settings_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Load and validate a nested run YAML with layered defaults.
+
+    Merge order (later overrides earlier):
+
+    1. Library defaults (``continuous_patterns.defaults.solver_defaults.yaml``).
+    2. User overrides: ``experiments/solver_settings.yaml`` when present, or
+       ``user_settings_path`` when passed explicitly.
+    3. Experiment YAML at ``experiment_path``.
 
     Parameters
     ----------
-    path
-        Path to ``.yaml`` on disk.
+    experiment_path
+        Path to the experiment ``.yaml`` on disk.
+    user_settings_path
+        Optional explicit path to user solver settings; default is
+        ``experiments/solver_settings.yaml`` relative to the process CWD.
 
     Returns
     -------
@@ -130,30 +185,45 @@ def load_run_config(path: Path) -> dict[str, Any]:
     Raises
     ------
     ValueError
-        If the file is empty, not a mapping, or missing a valid ``experiment`` block.
+        If the experiment file is empty, not a mapping, or missing a valid ``experiment`` block.
     FileNotFoundError
-        If ``path`` does not exist (from ``Path.read_text``).
+        If ``experiment_path`` does not exist.
     pydantic.ValidationError
-        If the document fails schema validation.
+        If the merged document fails schema validation.
     """
-    text = Path(path).read_text(encoding="utf-8")
-    raw = yaml.safe_load(text)
-    if raw is None:
+    experiment_path = Path(experiment_path)
+    if not experiment_path.is_file():
+        raise FileNotFoundError(f"Experiment config not found: {experiment_path}")
+
+    defaults = _load_library_defaults()
+    user = _load_user_solver_settings(
+        Path(user_settings_path) if user_settings_path is not None else None
+    )
+    raw_exp = yaml.safe_load(experiment_path.read_text(encoding="utf-8"))
+    if raw_exp is None:
         raise ValueError("config YAML is empty")
-    if not isinstance(raw, dict):
+    if not isinstance(raw_exp, dict):
         raise ValueError(
-            f"config root must be a mapping, got {type(raw).__name__}. {_MIGRATION_HINT}"
+            f"config root must be a mapping, got {type(raw_exp).__name__}. {_MIGRATION_HINT}"
         )
-    if "experiment" not in raw:
+
+    merged = _deep_merge(defaults, user)
+    merged = _deep_merge(merged, raw_exp)
+
+    # Option D (spectral mass drift) is always recorded when supported by the model driver.
+    merged.setdefault("output", {})
+    merged["output"]["record_spectral_mass_diagnostic"] = True
+
+    if "experiment" not in merged:
         raise ValueError(
             f"nested YAML required: missing top-level `experiment` block. {_MIGRATION_HINT}"
         )
-    exp = raw["experiment"]
+    exp = merged["experiment"]
     if not isinstance(exp, dict):
         raise ValueError(
             f"`experiment` must be a nested mapping, got {type(exp).__name__}. {_MIGRATION_HINT}"
         )
-    cfg = RunConfigValidated.model_validate(raw)
+    cfg = RunConfigValidated.model_validate(merged)
     return cfg.model_dump(mode="python")
 
 

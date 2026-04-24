@@ -37,6 +37,7 @@ time:
 
 output:
   save_final_state: true
+  record_evolution_gif: true
 
 initial:
   phi_m_init: 0.5

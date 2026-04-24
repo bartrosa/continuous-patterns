@@ -10,14 +10,17 @@ import pytest
 import yaml
 
 from continuous_patterns.core.io import (
-    RunConfigValidated,
     allocate_run_dir,
     load_run_config,
     save_final_state_npz,
     save_run_config,
     save_summary,
 )
-from continuous_patterns.core.plotting import parse_run_stamp_utc, plot_fields_final
+from continuous_patterns.core.plotting import (
+    parse_run_stamp_utc,
+    plot_fields_final,
+    write_evolution_gif,
+)
 
 
 def test_load_run_config_rejects_flat_yaml(tmp_path: Path) -> None:
@@ -28,6 +31,75 @@ def test_load_run_config_rejects_flat_yaml(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="experiment"):
         load_run_config(flat)
+
+
+def test_load_run_config_fills_output_from_defaults(tmp_path: Path) -> None:
+    """Merged library defaults supply ``output`` when the experiment YAML omits it."""
+    p = tmp_path / "minimal.yaml"
+    p.write_text(
+        """
+experiment:
+  name: demo
+  model: agate_ch
+  seed: 1
+geometry:
+  type: circular_cavity
+  L: 4.0
+  R: 1.5
+  n: 32
+physics:
+  W: 1.0
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+time:
+  dt: 0.05
+  T: 1.0
+  snapshot_every: 10
+""",
+        encoding="utf-8",
+    )
+    cfg = load_run_config(p)
+    assert cfg["time"]["dt"] == 0.05
+    assert cfg["output"]["flux_sample_dt"] == 2.0
+    assert cfg["output"]["log_level"] == "INFO"
+    assert cfg["output"]["record_spectral_mass_diagnostic"] is True
+
+
+def test_load_run_config_user_settings_override(tmp_path: Path) -> None:
+    """Explicit ``user_settings_path`` overrides library defaults."""
+    exp = tmp_path / "exp.yaml"
+    exp.write_text(
+        """
+experiment:
+  name: demo
+  model: agate_ch
+  seed: 1
+geometry:
+  type: circular_cavity
+  L: 4.0
+  R: 1.5
+  n: 32
+physics:
+  W: 1.0
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+output:
+  save_final_state: true
+""",
+        encoding="utf-8",
+    )
+    user = tmp_path / "user.yaml"
+    user.write_text("output:\n  log_level: DEBUG\n", encoding="utf-8")
+    cfg = load_run_config(exp, user_settings_path=user)
+    assert cfg["output"]["log_level"] == "DEBUG"
 
 
 def test_load_run_config_validates_nested_schema(tmp_path: Path) -> None:
@@ -92,11 +164,11 @@ def test_roundtrip_save_load_config_identical(tmp_path: Path) -> None:
     }
     path = tmp_path / "config.yaml"
     save_run_config(path, cfg)
-    again = load_run_config(path)
-    assert (
-        RunConfigValidated.model_validate(cfg).model_dump()
-        == RunConfigValidated.model_validate(again).model_dump()
-    )
+    once = load_run_config(path)
+    path2 = tmp_path / "config2.yaml"
+    save_run_config(path2, once)
+    twice = load_run_config(path2)
+    assert once == twice
 
 
 def test_save_final_state_npz_roundtrip(tmp_path: Path) -> None:
@@ -187,6 +259,20 @@ def test_plot_fields_final_includes_params_panel(tmp_path: Path) -> None:
     )
     assert out_nopanel.is_file()
     assert out.stat().st_size > out_nopanel.stat().st_size
+
+
+def test_write_evolution_gif_writes_file(tmp_path: Path) -> None:
+    n = 8
+    L = 1.0
+    R = 0.2
+    a0 = np.linspace(0.0, 1.0, n * n, dtype=np.float64).reshape(n, n)
+    a1 = np.linspace(1.0, 0.0, n * n, dtype=np.float64).reshape(n, n)
+    snaps = [(0.0, a0), (1.0, a1)]
+    out = tmp_path / "evo.gif"
+    path = write_evolution_gif(snaps, out, L=L, R=R, fps=5, field_name="phi_m")
+    assert path is not None
+    assert path.is_file()
+    assert path.stat().st_size > 0
 
 
 def test_parse_run_stamp_utc() -> None:

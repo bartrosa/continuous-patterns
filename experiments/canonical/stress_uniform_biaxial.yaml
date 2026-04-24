@@ -1,0 +1,43 @@
+experiment:
+  name: stress_uniform_biaxial
+  model: agate_ch
+  seed: 42
+  description: |
+    medium_pinning physics + isotropic biaxial stress (σ_xx = σ_yy = σ_0).
+    Tests circular symmetry of bands under isotropic loading.
+
+geometry:
+  type: circular_cavity
+  L: 200.0
+  R: 80.0
+  n: 512
+  eps_scale: 2.0
+
+physics:
+  W: 1.0
+  gamma: 4.0
+  kappa_x: 0.5
+  kappa_y: 0.5
+  M_m: 0.01
+  M_c: 1.0
+  D_c: 1.0
+  k_rxn: 0.5
+  c_sat: 0.2
+  c_0: 1.0
+  c_ostwald: 0.6
+  w_ostwald: 0.1
+  lambda_bar: 10.0
+  use_ratchet: true
+  phi_m_ratchet_low: 0.3
+  phi_m_ratchet_high: 0.5
+
+stress:
+  mode: uniform_biaxial
+  sigma_0: 0.5
+  stress_coupling_B: 0.3
+  stress_eps_factor: 3.0
+
+time:
+  T: 10000.0
+
+initial: {}

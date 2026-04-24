@@ -1,0 +1,17 @@
+# Library-bundled solver defaults. Merged underneath ``experiments/solver_settings.yaml``
+# (if present) and underneath the per-experiment YAML. See docs/ARCHITECTURE.md §10.
+#
+# Experiment-specific physics/geometry belong in experiment YAML only.
+
+time:
+  dt: 0.01
+  snapshot_every: 500
+
+output:
+  save_final_state: true
+  flux_sample_dt: 2.0
+  # Option D (spectral mass drift): also forced True in ``load_run_config`` / ``run_one``.
+  record_spectral_mass_diagnostic: true
+  record_evolution_gif: false
+  include_params_panel: true
+  log_level: INFO

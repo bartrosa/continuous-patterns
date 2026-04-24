@@ -1,6 +1,6 @@
 sweep:
   name: gamma_scan
-  base_config: experiments/templates/agate_ch_baseline.yaml
+  base_config: experiments/canonical/medium_pinning.yaml
 
 grid:
   physics.gamma: [1.0, 2.0, 3.0, 5.0]

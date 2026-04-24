@@ -1,0 +1,10 @@
+# User-level overrides applied to every run on this machine (optional).
+#
+# Copy to ``experiments/solver_settings.yaml`` (gitignored) and edit there.
+# Keys omitted here fall back to ``src/continuous_patterns/defaults/solver_defaults.yaml``.
+# Per-experiment YAMLs under ``experiments/canonical/`` still override these.
+#
+# See docs/ARCHITECTURE.md §10.
+
+output:
+  log_level: INFO
