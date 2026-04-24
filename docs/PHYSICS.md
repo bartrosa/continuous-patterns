@@ -173,9 +173,13 @@ $$
 
 with default $\varepsilon_\chi = 2$ (`eps_scale` in code). Thus $\chi \approx 1$ inside the cavity and $\approx 0$ outside.
 
-**Dirichlet ring for $c$:** a narrow Gaussian-like mask centred on $r \approx R$, thresholded, enforces rim values of $c$ (scalar $c_0$ or vertical ramp with `c0_alpha` for gravity-rim experiments). **Not** a sharp variational Dirichlet line — a **smooth ring mask** in the discrete equations.
+**Implementation detail (χ transition width):** the effective denominator is $\max(\varepsilon_\chi \Delta x,\, \Delta x)$ — i.e. `max(eps_scale·Δx, Δx)` — so the transition width is never narrower than one cell. This floor prevents pathological aliasing when `eps_scale` is sent close to zero. For standard `eps_scale ≥ 2` the floor is inactive.
+
+**Dirichlet ring for $c$:** a **normalized Gaussian** mask centred on $r \approx R$, with **unit peak**, enforces rim values of $c$ (scalar $c_0$ or vertical ramp with `c0_alpha` for gravity-rim experiments). **Implementation:** `ring = exp(-½((r-R)/σ)²) / max(...)` with $\sigma = \texttt{eps\_scale} \cdot \Delta x$, again floored as $\sigma = \max(\texttt{eps\_scale} \cdot \Delta x,\, \Delta x)$ in code. **No hard threshold** is applied — the smooth form is JIT-friendly and the numerical tail beyond $\sim 5\sigma$ is indistinguishable from zero. **Not** a sharp variational Dirichlet line — a **smooth ring mask** in the discrete equations.
 
 **Accounting annulus:** a thin shell $R - 2\Delta x \le r < R$ is used for flux diagnostics (rim-adjacent bookkeeping).
+
+**Interpolation on circles (flux sampling):** when estimating $c$ (or related fields) on circles used for **Option B** — e.g. at radii $r_{\mathrm{fix}} \pm \Delta x$ for a finite-difference $\partial c/\partial r$ — values are sampled from the **cell-centred** periodic grid using **`scipy.ndimage.map_coordinates(..., order=1)`** (bilinear index interpolation) at fractional indices corresponding to $(x/\Delta x - \tfrac{1}{2},\, y/\Delta x - \tfrac{1}{2})$.
 
 ### 6.2 Stage II — pure Cahn–Hilliard relaxation (separate model)
 
@@ -337,9 +341,17 @@ This section lists **primary** diagnostics used in runs, sweeps, and paper-facin
 
 **Goal:** isolate **FFT + IMEX** drift on a **simplified** periodic problem without cavity Dirichlet.
 
-**Method:** a **short auxiliary** simulation with **blob** initial $c$, **no Dirichlet**, `disable_dirichlet: true`, run with **`jax_enable_x64 = true`** for sensitivity; returns **percent drift** of **full-grid** total silica mass over the short horizon.
+**Method (legacy specification):** a **separate short** simulation (not the main trajectory) with:
 
-**Interpretation:** this is a **stiffness / operator** sanity check, **not** a substitute for Option B on the full agate cavity run (see Phase 3 notes in internal reports: spectral diagnostic is **auxiliary** to the main trajectory).
+- **`disable_dirichlet: true`** — no rim replenishment of $c$.
+- **Initial condition:** **blob** mode — a χ-windowed **off-centre Gaussian** in $c$ only, with **$\phi_m = \phi_c = 0$** (dissolved-silica bump on the periodic torus).
+- **No χ projection** of $(\phi_m,\phi_c,c)$ after each step in this auxiliary run, so the state evolves as **periodic spectral CH + diffusion** on the **full** grid (no cavity masking in the diagnostic kernel).
+- **Horizon (defaults):** **`T = 1.0`** time units at **`dt = 0.01`** ⇒ **100** steps unless overridden by YAML keys such as `spectral_mass_T`, `spectral_mass_dt`, `spectral_mass_snapshot_every`.
+- **Precision:** run with **`jax_enable_x64 = true`** for sensitivity to tiny drift.
+- **Series:** at each diagnostic snapshot, record the **full-domain** integral of total silica $c + \rho_m \phi_m + \rho_c \phi_c$ (no cavity mask).
+- **Output:** **`leak_pct` = $100 \times (M_{\mathrm{final}} - M_{\mathrm{initial}}) / \max(|M_{\mathrm{initial}}|, \varepsilon)$**; expect **$|\mathrm{leak\_pct}| \ll 0.1\%$** near floating-point roundoff when the operator is clean. Stored in `summary.json` under **`spectral_mass_conservation`** (or legacy alias). Enable on the main run card with **`record_spectral_mass_diagnostic: true`**.
+
+**Interpretation:** this is a **stiffness / operator** sanity check, **not** a substitute for Option B on the full agate cavity run (spectral diagnostic is **auxiliary** to the main trajectory).
 
 ### 10.3 χ-weighted cavity silica windows (`main_silica_window_drifts`)
 
@@ -377,11 +389,16 @@ This section lists **primary** diagnostics used in runs, sweeps, and paper-facin
 
 Examples: **moganite–chalcedony anticorrelation** on the horizontal centreline; **overshoot fraction** above physical packing; **radial profiles** of $\phi_m + \phi_c$; **kymograph** $(t,r_{\mathrm{peak}})$ from horizontal-line peaks. These support morphology narrative but are secondary to Sections 10.1–10.7 for mass and stability claims.
 
+**Labyrinth heuristic (morphology tag):** a run may be flagged as **labyrinth-like** when the **median multislice** band count (Section 10.7) is **below a fixed threshold** (e.g. $< 10$ in the legacy implementation) **or** when **azimuthal variance** of the pattern on an intermediate-radius ring **dominates** the variance of the **azimuthally averaged** radial profile — i.e. tangential structure wins over purely radial banding in that diagnostic. This is a **post-process classifier**, not a separate PDE term.
+
 ### 10.9 Known model / implementation limitations (summary)
 
 - **Barrier + hard clip** (Section 4): not a strict variational $\phi \in [0,1]$ surface-phase model.
 - **Kirsch mode** (Section 7.6): toy σ-field, not inclusion theory in the cavity.
 - **Canonical Jabłczyński** (Section 10.6): horizontal bias — do not over-interpret vertical textures through this scalar alone.
+- **No elasticity / fluid pressure:** the model omits elastic strain energy and explicit fluid pressure beyond what is encoded in prescribed $\sigma_{ij}$ and $c$; there are **no** explicit sharp grain-boundary interfaces beyond diffuse interfaces.
+- **Ratchet** (Section 3): a **phenomenological** kinetic tilt of Ostwald partitioning in a band of $\phi_m$ — **not** a calibrated multi-mineral rate law.
+- **Dimensionless formulation:** all lengths, times, diffusivities, and reaction constants are **dimensionless** unless an explicit map to SI units is introduced elsewhere.
 
 ---
 
@@ -391,4 +408,4 @@ We solve a **reaction-coupled anisotropic Model C** system for $(c,\phi_m,\phi_c
 
 ---
 
-*Document version: Phase 0 revised — aligned with repository physics as of authoring; numerical details should be re-verified against any rewritten codebase.*
+*Document version: post-NOTES merge — includes rim `map_coordinates` sampling, spectral-mass diagnostic defaults, labyrinth heuristic, and dimensionless-scope notes ported from legacy reviewer notes.*
