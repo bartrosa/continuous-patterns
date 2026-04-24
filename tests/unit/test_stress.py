@@ -93,6 +93,8 @@ def test_flamant_finite_and_rescaled() -> None:
     assert jnp.all(jnp.isfinite(sxy))
     dev = sxx - syy
     assert float(jnp.max(jnp.abs(dev))) == pytest.approx(float(s0), rel=0, abs=1e-10)
+    max_entry = jnp.max(jnp.abs(sxx)) + jnp.max(jnp.abs(syy)) + jnp.max(jnp.abs(sxy))
+    assert float(max_entry) < 15.0 * float(s0)
 
 
 def test_flamant_symmetric_about_vertical_midline() -> None:
@@ -124,6 +126,35 @@ def test_kirsch_and_builder_raise() -> None:
         kirsch(L=10.0, R=2.0, n=16, sigma_0=0.1)
     with pytest.raises(NotImplementedError):
         STRESS_BUILDERS["kirsch"](L=10.0, R=2.0, n=16, sigma_0=0.1)
+
+
+def test_stress_mu_hat_pure_shear_matches_mixed_derivative() -> None:
+    """Pure shear ``σ_xy`` must couple via mixed derivatives (guards Phase 2 Bug B)."""
+    L, n = 10.0, 64
+    kx = 2.0 * jnp.pi / L
+    ky = 2.0 * jnp.pi / L
+    x, y, kx_wave, ky_wave, _ = _grid_psi_k(L=L, n=n)
+    psi = (jnp.sin(kx * x) * jnp.sin(ky * y)).astype(jnp.float64)
+    s0, B = 0.3, 1.0
+    sxx, syy, sxy = pure_shear(L=L, n=n, sigma_0=s0)
+    mu_hat = stress_mu_hat(psi, sxx, sxy, syy, kx_wave, ky_wave, B)
+    mu = jnp.real(jnp.fft.ifft2(mu_hat))
+    expected = -2.0 * B * s0 * kx * ky * jnp.cos(kx * x) * jnp.cos(ky * y)
+    assert jnp.allclose(mu, expected, rtol=1e-9, atol=1e-9)
+
+
+def test_sigma_symmetry_in_coupling() -> None:
+    """Same ``σ_xy`` in both flux rows matches the ``stress_contribution_to_mu`` path."""
+    L, n = 12.0, 32
+    x, y, kx_wave, ky_wave, _ = _grid_psi_k(L=L, n=n)
+    phi_m = jnp.sin(2.0 * jnp.pi * x / L).astype(jnp.float64)
+    phi_c = 0.15 * jnp.cos(2.0 * jnp.pi * y / L).astype(jnp.float64)
+    sxx, syy, sxy = pure_shear(L=L, n=n, sigma_0=0.4)
+    B = 0.85
+    dm, dc = stress_contribution_to_mu(phi_m, phi_c, sxx, sxy, syy, kx_wave, ky_wave, B)
+    psi = phi_m - phi_c
+    div = divergence_from_sigma_psi(psi, sxx, sxy, sxy, syy, kx_wave, ky_wave)
+    assert jnp.allclose(dm - dc, -B * div, rtol=1e-12, atol=1e-12)
 
 
 def test_stress_mu_hat_uniform_uniaxial_matches_laplacian_identity() -> None:
