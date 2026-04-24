@@ -1,6 +1,276 @@
 """Single IMEX time step for Model C CH + reaction + optional stress.
 
 One ``imex_step(state, geom, prm, dt)`` shared by Stage I and Stage II; branches
-on ``SimParams.reaction_active`` / ``dirichlet_active`` (``docs/ARCHITECTURE.md``
-§3.4, §4.2).
+on ``SimParams.reaction_active`` / ``SimParams.dirichlet_active`` and on whether
+stress coupling is active (``stress_coupling_B`` and non-zero ``σ``), using
+:func:`jax.lax.cond` for JIT-friendly predicates (``docs/ARCHITECTURE.md`` §3.4).
+
+Semi-discrete scheme (``docs/PHYSICS.md`` §8.2): implicit Laplacian on ``c``
+and linear stiff Cahn--Hilliard symbol (anisotropic ``κ``) in Fourier space;
+nonlinear bulk, barrier, reaction ``G``, and ψ-split stress are explicit.
 """
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import jax
+import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
+
+from continuous_patterns.core.stress import stress_contribution_to_mu
+
+
+@dataclass(frozen=True)
+class Geometry:
+    """Per-cell masks, spectral symbols, and prescribed stress (ARCHITECTURE §2.1)."""
+
+    chi: Array
+    ring: Array
+    ring_accounting: Array
+    sigma_xx: Array
+    sigma_yy: Array
+    sigma_xy: Array
+    k_sq: Array
+    kx_sq: Array
+    ky_sq: Array
+    kx_wave: Array
+    ky_wave: Array
+    k_four: Array
+    rv: Array
+    dx: float
+    L: float
+    R: float
+    n: int
+    xc: float
+    yc: float
+
+
+@dataclass(frozen=True)
+class SimParams:
+    """Minimal physics bundle for one IMEX step (extend in Phase 4+)."""
+
+    reaction_active: bool = True
+    dirichlet_active: bool = True
+    D_c: float = 1.0
+    M_m: float = 1.0
+    M_c: float = 1.0
+    W: float = 1.0
+    gamma: float = 1.0
+    kappa_x: float = 1.0
+    kappa_y: float = 1.0
+    stress_coupling_B: float = 0.0
+    k_rxn: float = 1.0
+    c_sat: float = 0.0
+    rho_m: float = 1.0
+    rho_c: float = 1.0
+    c0: float = 1.0
+    lambda_bar: float = 10.0
+    c_ostwald: float = 0.5
+    w_ostwald: float = 0.1
+    use_ratchet: bool = True
+    phi_m_ratchet_low: float = 0.3
+    phi_m_ratchet_high: float = 0.5
+
+
+def _barrier_prime(phi: Array, lambda_bar: float) -> Array:
+    neg_excess = jnp.maximum(-phi, 0.0)
+    pos_excess = jnp.maximum(phi - 1.0, 0.0)
+    return -2.0 * lambda_bar * neg_excess + 2.0 * lambda_bar * pos_excess
+
+
+def _smoothstep_S(phi_m: Array, low: float, high: float) -> Array:
+    """Smoothstep ``S`` on ``[low, high]`` (PHYSICS §3 ratchet)."""
+    eps = jnp.asarray(1e-12, dtype=phi_m.dtype)
+    span = jnp.maximum(jnp.asarray(high - low, dtype=phi_m.dtype), eps)
+    t = (phi_m - low) / span
+    t = jnp.clip(t, 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _G(c: Array, phi_m: Array, phi_c: Array, prm: SimParams) -> Array:
+    """Intrinsic precipitation rate ``k_rxn relu(c-c_sat) relu(1-φ_m-φ_c)`` (no ``χ``)."""
+    relu_c = jnp.maximum(c - prm.c_sat, 0.0)
+    relu_p = jnp.maximum(1.0 - phi_m - phi_c, 0.0)
+    return prm.k_rxn * relu_c * relu_p
+
+
+def _psi_ostwald(c: Array, phi_m: Array, prm: SimParams) -> tuple[Array, Array]:
+    """Ostwald partition with optional ratchet (PHYSICS §3)."""
+    t = (c - prm.c_ostwald) / jnp.maximum(prm.w_ostwald, 1e-12)
+    psi_m_base = jax.nn.sigmoid(t)
+
+    def _with_ratchet(_: Array) -> tuple[Array, Array]:
+        S = _smoothstep_S(phi_m, prm.phi_m_ratchet_low, prm.phi_m_ratchet_high)
+        # ``r = 1`` when ratchet is active (PHYSICS §3); ``use_ratchet=False`` uses ``_no_ratchet``.
+        pm = psi_m_base + (1.0 - psi_m_base) * S
+        pm = jnp.clip(pm, 0.0, 1.0)
+        return pm, jnp.clip(1.0 - pm, 0.0, 1.0)
+
+    def _no_ratchet(_: Array) -> tuple[Array, Array]:
+        return jnp.clip(psi_m_base, 0.0, 1.0), jnp.clip(1.0 - psi_m_base, 0.0, 1.0)
+
+    operand = jnp.asarray(0.0, dtype=phi_m.dtype)
+    return jax.lax.cond(jnp.asarray(prm.use_ratchet), _with_ratchet, _no_ratchet, operand)
+
+
+def _sigma_active(geom: Geometry) -> Array:
+    s = (
+        jnp.max(jnp.abs(geom.sigma_xx))
+        + jnp.max(jnp.abs(geom.sigma_yy))
+        + jnp.max(jnp.abs(geom.sigma_xy))
+    )
+    return s > 1e-14
+
+
+def _apply_stress(
+    phi_m: Array,
+    phi_c: Array,
+    geom: Geometry,
+    prm: SimParams,
+) -> tuple[Array, Array]:
+    return stress_contribution_to_mu(
+        phi_m,
+        phi_c,
+        geom.sigma_xx,
+        geom.sigma_xy,
+        geom.sigma_yy,
+        geom.kx_wave,
+        geom.ky_wave,
+        prm.stress_coupling_B,
+    )
+
+
+def _zero_stress(phi_m: Array) -> tuple[Array, Array]:
+    z = jnp.zeros_like(phi_m)
+    return z, z
+
+
+def _update_phase(
+    phi: Array,
+    phi_other: Array,
+    chi: Array,
+    geom: Geometry,
+    prm: SimParams,
+    dt: float,
+    mobility: float,
+    stress_delta: Array,
+) -> Array:
+    """Implicit linear CH stiff block in Fourier space with explicit ``μ_nl``.
+
+    Note
+    ----
+    The return uses ``(1 - χ) φ + χ φ_new``: only cavity cells advance; outside
+    the cavity ``φ`` is held at the previous step. This is **not** a mass-
+    conserving projection on the full torus — cavity-weighted silica is meant
+    for diagnostics (Option B, χ-window drifts), not enforced by this operator.
+    """
+    stiff_sym = prm.kappa_x * geom.kx_sq + prm.kappa_y * geom.ky_sq
+    df = 2.0 * prm.W * phi * (1.0 - phi) * (1.0 - 2.0 * phi)
+    bar = _barrier_prime(phi, prm.lambda_bar)
+    mu_nl = df + bar + prm.gamma * phi_other + stress_delta
+    phi_hat = jnp.fft.fft2(phi)
+    nl_hat = jnp.fft.fft2(mu_nl)
+    den = 1.0 + dt * mobility * geom.k_sq * stiff_sym
+    phi_new_hat = (phi_hat - dt * mobility * geom.k_sq * nl_hat) / den
+    phi_new = jnp.real(jnp.fft.ifft2(phi_new_hat))
+    return (1.0 - chi) * phi + chi * phi_new
+
+
+def imex_step(
+    state: tuple[ArrayLike, ArrayLike, ArrayLike],
+    geom: Geometry,
+    prm: SimParams,
+    dt: float,
+) -> tuple[tuple[Array, Array, Array], Array]:
+    """Advance ``(φ_m, φ_c, c)`` by one IMEX step of length ``dt``.
+
+    Step order
+    ----------
+    #. Reaction intrinsic ``G`` when ``reaction_active``; ``χ`` masks sources in
+       the ``c`` and ``φ`` updates only (no ``χ²`` on the rate).
+    #. Implicit ``c`` diffusion + ``χ`` mask; rim Dirichlet on ``c`` when
+       ``dirichlet_active``.
+    #. Implicit phase updates with explicit ``μ_nl`` (bulk, barrier, ``γ``,
+       ψ-split stress when active).
+    #. Explicit ``φ_α += Δt χ ψ_α G`` with ``ψ`` from **pre-step** ``(c, φ_m)``
+       (same time level as ``G``), Ostwald + optional ratchet.
+    #. Clip ``φ_α`` to ``[-0.05, 1.05]``.
+
+    PHYSICS §4 clips after the spectral IFFT of the CH update; here the clip also
+    follows the explicit reaction increment (small correction; avoids a second
+    clip pass).
+
+    Parameters
+    ----------
+    state
+        ``(phi_m, phi_c, c)`` each ``(n, n)``.
+    geom
+        Masks and spectral symbols.
+    prm
+        Physics flags and coefficients.
+    dt
+        Time step (positive).
+
+    Returns
+    -------
+    tuple
+        ``((phi_m', phi_c', c'), delta_pair)`` where ``delta_pair`` is a length-2
+        vector reserved for rim-flux bookkeeping (zeros when ``dirichlet_active``
+        is ``False`` or not yet wired).
+    """
+    if dt <= 0:
+        raise ValueError(f"dt must be positive, got {dt}")
+
+    phi_m = jnp.asarray(state[0])
+    phi_c = jnp.asarray(state[1])
+    c = jnp.asarray(state[2])
+    chi = geom.chi
+
+    G = jax.lax.cond(
+        jnp.asarray(prm.reaction_active),
+        lambda cc: _G(cc[0], cc[1], cc[2], prm),
+        lambda cc: jnp.zeros_like(cc[0]),
+        (c, phi_m, phi_c),
+    )
+
+    c_hat = jnp.fft.fft2(c)
+    g_hat = jnp.fft.fft2(chi * G)
+    c_den = 1.0 + dt * prm.D_c * geom.k_sq
+    c_new_hat = (c_hat - dt * g_hat) / c_den
+    c_new = jnp.real(jnp.fft.ifft2(c_new_hat))
+    c_new = (1.0 - chi) * c + chi * c_new
+
+    stress_pred = jnp.logical_and(
+        jnp.asarray(prm.stress_coupling_B > 1e-20),
+        _sigma_active(geom),
+    )
+    dmu_m, dmu_c = jax.lax.cond(
+        stress_pred,
+        lambda pc: _apply_stress(pc[0], pc[1], geom, prm),
+        lambda pc: _zero_stress(pc[0]),
+        (phi_m, phi_c),
+    )
+
+    phi_m_new = _update_phase(phi_m, phi_c, chi, geom, prm, dt, prm.M_m, dmu_m)
+    phi_c_new = _update_phase(phi_c, phi_m, chi, geom, prm, dt, prm.M_c, dmu_c)
+
+    psi_m, psi_c = _psi_ostwald(c, phi_m, prm)
+    phi_m_new = phi_m_new + dt * chi * psi_m * G
+    phi_c_new = phi_c_new + dt * chi * psi_c * G
+
+    c_new = jax.lax.cond(
+        jnp.asarray(prm.dirichlet_active),
+        lambda z: (1.0 - geom.ring) * z + geom.ring * jnp.asarray(prm.c0, dtype=z.dtype),
+        lambda z: z,
+        c_new,
+    )
+
+    lo = jnp.asarray(-0.05, dtype=phi_m_new.dtype)
+    hi = jnp.asarray(1.05, dtype=phi_m_new.dtype)
+    phi_m_new = jnp.clip(phi_m_new, lo, hi)
+    phi_c_new = jnp.clip(phi_c_new, lo, hi)
+
+    delta_pair = jnp.zeros((2,), dtype=c_new.dtype)
+    return (phi_m_new, phi_c_new, c_new), delta_pair
