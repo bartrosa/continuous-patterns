@@ -193,6 +193,7 @@ results/agate_ch/
 results/agate_stage2/
 !results/agate_stage2/README.md
 papers/*
+archive/*
 
 # Ruff stuff:
 .ruff_cache/

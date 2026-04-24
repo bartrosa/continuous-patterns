@@ -15,7 +15,7 @@ variables:
   before_script:
     - pip install --no-cache-dir uv
     - uv --version
-    - uv sync --frozen --group dev --extra cpu
+    - uv sync --frozen --extra dev
 
 quality:
   extends: .uv_base

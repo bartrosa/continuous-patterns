@@ -5,34 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "continuous-patterns"
 version = "0.1.0"
-description = "Research-oriented continuous-media pattern experiments (JAX)."
+description = "Agate and related pattern-formation experiments — pseudospectral Cahn–Hilliard (JAX)."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 authors = [{ name = "continuous-patterns contributors" }]
-dependencies = []
-
-[project.optional-dependencies]
-cpu = ["jax>=0.5"]
-cuda = ["jax[cuda12]>=0.5"]
-agate = [
-    "jax[cuda12]>=0.5",
-    "numpy>=2",
-    "matplotlib>=3.8",
-    "tqdm>=4",
+dependencies = [
     "h5py>=3",
-    "scipy>=1.11",
+    "jax>=0.5",
+    "matplotlib>=3.8",
+    "numpy>=2",
+    "pydantic>=2",
     "pyyaml>=6",
-    "imageio[ffmpeg]>=2",
+    "scipy>=1.11",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
+cuda = ["jax[cuda12]>=0.5"]
 dev = [
     "pre-commit>=4",
     "pytest>=8",
     "ruff>=0.9",
-    "scipy>=1.11",
-    "tqdm>=4",
 ]
 
 [tool.setuptools.packages.find]
@@ -55,6 +48,3 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.format]
 quote-style = "double"
-
-[tool.uv]
-default-groups = ["dev"]
