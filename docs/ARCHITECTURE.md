@@ -133,7 +133,7 @@ The **only** format accepted by **`core.io`** for new code is **nested** YAML ma
 
 **One-time migration (Phase 4):** archival flat YAMLs are converted to nested templates using a **throwaway script** (e.g. `scripts/flatten_to_nested_once.py` or a notebook) — **not** part of the stable `core` API. After conversion, templates live under **`experiments/templates/`**.
 
-**Validation:** `pydantic` v2 or `dataclasses` + checks in `io.py` — fail fast on unknown keys / missing required sections per `experiment.model`.
+**Validation:** **`pydantic` v2** models in `core.io` (or a dedicated `core/config_schema.py`) — nested YAML loads into typed settings; use **`Literal`** / unions for `stress.mode` and `geometry.type` dispatch. Fail fast on unknown keys / missing required sections per `experiment.model`.
 
 ```yaml
 experiment:
@@ -326,7 +326,7 @@ results/
       config.yaml          # nested, as-run (canonical copy)
       summary.json         # stage-appropriate diagnostics only
       final_state.npz
-      snapshots.h5         # optional
+      snapshots.h5         # optional; **HDF5 only** for time series (no per-step NPZ shard format in this refactor)
       fields_final.png
       log.txt              # optional
 
@@ -362,8 +362,10 @@ Merges sweep YAML into nested per-run dicts; calls **`experiments.run`** program
 | Tier | Scope |
 |------|--------|
 | `tests/unit/` | `spectral`, `masks`, `stress`, `imex` flags (Stage II branch), `io` nested-only rejects |
-| `tests/integration/` | Short-$T$ smoke per model; assert **correct diagnostics module** keys in `summary.json` |
-| `tests/regression/` | Optional refs; x64 on demand per §2.7 |
+| `tests/integration/` | Short-$T$ **CPU** smoke per model; **`jax_enable_x64=False`** (production default); assert **correct diagnostics module** keys in `summary.json` |
+| `tests/regression/` | Optional refs; **`jax_enable_x64=True` only where a test explicitly needs it** (§2.7) |
+
+**CI policy (resolved):** GitLab / local CI runs **CPU-only** integration smoke; **no** GPU runner configuration. Long GPU reproduction is **user-managed** (local or HPC), not a CI gate.
 
 ---
 
@@ -395,12 +397,20 @@ Calls **`experiments.run`** with eight nested template paths (post Phase 4 conve
 
 ---
 
-## 11. Open decisions (non-blocking)
+## 11. Resolved implementation choices (formerly open)
 
-- **Pydantic vs hand-rolled** validation for nested YAML.
-- Default **`snapshots.h5`** vs per-step NPZ shards.
-- **GPU CI** scope (CPU-only smoke acceptable).
+### §11.1 — YAML validation: **Pydantic v2**
+
+Nested run configs are validated with **`pydantic` v2** (typed models, discriminated unions / `Literal` for `stress.mode` and `geometry.type`, clear validation errors). This is **required** for `core.io`; hand-rolled ad hoc dict checks are avoided for load paths.
+
+### §11.2 — Snapshot format: **HDF5 only**
+
+Trajectory storage remains **`snapshots.h5`** (existing chunk/group convention or a documented successor within HDF5). **No** introduction of per-step NPZ shards in this refactor; changing snapshot format is **out of scope**.
+
+### §11.3 — CI scope: **CPU-only smoke**
+
+Integration tests run on **CPU** with **`jax_enable_x64=False`** to match the default production integrator policy. **GPU** regression and long-$T$ figure regeneration are **manual / user-managed**, not CI-managed.
 
 ---
 
-*Document version: Phase 1 revised (V1–V5) — approved target for Phase 2 `CLEANUP_PLAN.md` and implementation.*
+*Document version: Phase 1 + §11 closure — aligned with `CLEANUP_PLAN.md` Phase 2.*
