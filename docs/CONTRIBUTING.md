@@ -50,6 +50,8 @@ See [ARCHITECTURE.md §2.8](ARCHITECTURE.md). In short:
 - **Integration:** short end-to-end runs per model driver and CLI paths.
 - **Regression:** reserved for Phase 4 (bitwise or metric comparisons to archived results); not CI-gated yet.
 
+**Progress / logs in tests:** pass **`show_progress=False`** to **`simulate`** / **`run_one`** so tqdm stays off. **`run_one`** with **`write_artifacts=True`** writes **`run.log`** under the run root (`ResultPaths.log_file`) — assert on file contents or attach a **`logging`** handler to the **`continuous_patterns`** logger if you need in-memory capture (the package logger uses **`propagate=False`** once configured by **`run_one`**).
+
 ## Known permissive areas (future tightening)
 
 - **`RunConfigValidated.physics`:** still a `dict[str, Any]`. Model-specific knobs vary; a full `PhysicsSpec` per `experiment.model` is deferred until validation pain justifies it.

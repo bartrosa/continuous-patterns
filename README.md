@@ -37,7 +37,12 @@ uv run python -m continuous_patterns.experiments.run \
   --no-write
 ```
 
-Omit `--no-write` to write `config.yaml`, `summary.json`, `final_state.npz`, and `figures_final.png` under `results/<experiment_name>/<timestamp>/`.
+Omit `--no-write` to write `config.yaml`, `summary.json`, `final_state.npz`, `figures_final.png`, and **`run.log`** (Python logging at DEBUG) under `results/<experiment_name>/<timestamp>/`.
+
+Optional flags:
+
+- **`--log-level`** — console only: `DEBUG`, `INFO`, `WARNING`, `ERROR` (default `INFO`). The file log stays DEBUG when artifacts are written.
+- **`--no-progress`** — disable **tqdm** chunk progress (models still print nothing per step; progress is per JIT chunk).
 
 ### Run a parameter sweep
 
@@ -47,7 +52,7 @@ uv run python -m continuous_patterns.experiments.sweep \
   --out-dir results
 ```
 
-Each sweep creates `results/sweeps/<name>_<timestamp>/` with a `manifest.json`, `report.md`, and one subdirectory per grid point.
+Each sweep creates `results/sweeps/<name>_<timestamp>/` with a `manifest.json`, `report.md`, and one subdirectory per grid point. The same **`--log-level`** and **`--no-progress`** flags apply (outer tqdm over combinations plus per-run bars unless disabled).
 
 ### Programmatic baseline smoke
 
@@ -58,6 +63,8 @@ uv run python examples/reproduce_canonical.py
 ```
 
 Quick smoke (small ``n`` / short ``T``): `CP_REPRODUCE_MINI=1 uv run python examples/reproduce_canonical.py`.
+
+Environment variables for that script: **`CP_LOG_LEVEL`** (default `INFO`), **`CP_NO_PROGRESS=1`** to turn off tqdm, same semantics as the CLI flags above.
 
 ## Results directory layout
 
@@ -82,6 +89,8 @@ New runs follow **ARCHITECTURE §5**: under the chosen results root, single runs
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for coding standards, testing, and known permissive areas (`physics` / `initial` dicts).
 
 ## Development
+
+Runtime deps include **`tqdm`** (chunk progress in **`models.*.simulate`**) and standard-library **`logging`** (console + **`run.log`** via **`experiments.run`**).
 
 ```bash
 uv run pytest

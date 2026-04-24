@@ -325,8 +325,12 @@ Builds cavity `Geometry`, sets `SimParams(reaction_active=True, dirichlet_active
 def build_geometry(cfg: dict[str, Any]) -> Geometry: ...
 def build_sim_params(cfg: dict[str, Any]) -> SimParams: ...
 def build_initial_state(cfg: dict[str, Any], geom: Geometry, prm: SimParams, key: jax.Array) -> SimState: ...
-def simulate(cfg: dict[str, Any], *, chunk_size: int = 2000) -> SimResult: ...
+def simulate(
+    cfg: dict[str, Any], *, chunk_size: int = 2000, show_progress: bool = True
+) -> SimResult: ...
 ```
+
+**Progress / logging:** the outer integration loop uses **`tqdm.auto`** (total steps = `T/dt`, postfix simulation time `t`). Standard **`logging`** under the **`continuous_patterns`** namespace: **`run.log`** in the run directory (DEBUG) when `experiments.run` writes artifacts; console level follows **`run_one(..., log_level=...)`** / CLI **`--log-level`**. Per-chunk lines are **DEBUG** only (not per micro-step).
 
 ### 4.2 `models.agate_stage2`
 
@@ -335,8 +339,12 @@ def simulate(cfg: dict[str, Any], *, chunk_size: int = 2000) -> SimResult: ...
 Builds bulk `Geometry` (`chi \equiv 1`, zero `ring`), sets **`SimParams(reaction_active=False, dirichlet_active=False)`** (and `enable_reaction`-like knobs consistent with PHYSICS), uses the **same** **`core.imex.imex_step`**, then **`core.diagnostics_stage2`** for summaries.
 
 ```python
-def simulate(cfg: dict[str, Any], *, chunk_size: int = 2000) -> SimResult: ...
+def simulate(
+    cfg: dict[str, Any], *, chunk_size: int = 2000, show_progress: bool = True
+) -> SimResult: ...
 ```
+
+Same **tqdm** + **logging** behaviour as §4.1.
 
 ---
 
@@ -353,7 +361,7 @@ results/
       final_state.npz
       snapshots.h5         # optional; **HDF5 only** for time series (no per-step NPZ shard format in this refactor)
       fields_final.png
-      log.txt              # optional
+      run.log                # Python logging (DEBUG) when `experiments.run` writes artifacts
 
   sweeps/
     <sweep_name>_<timestamp>/
@@ -370,15 +378,15 @@ results/
 
 ### 6.1 `experiments.run` (**canonical**)
 
-**CLI:** `python -m continuous_patterns.experiments.run --config path/to/nested.yaml [--out-dir ...]`.
+**CLI:** `python -m continuous_patterns.experiments.run --config path/to/nested.yaml [--out-dir ...] [--chunk-size N] [--no-write] [--log-level INFO|DEBUG|...] [--no-progress]`.
 
-**Flow:** `core.io.load_run_config` → validate → `allocate_run_dir` → dispatch `models.agate_ch.simulate` vs `models.agate_stage2.simulate` → stage-specific diagnostics → write `config.yaml` / `summary.json` / NPZ / PNG.
+**Flow:** `core.io.load_run_config` → validate → **`allocate_run_dir`** (when writing) → attach **`logging`** handlers (stdout + **`run.log`**) → dispatch **`models.*.simulate(..., show_progress=...)`** → stage-specific diagnostics → write `config.yaml` / `summary.json` / NPZ / PNG → detach file handler in **`finally`**.
 
-**Depends on:** `models`, `core.io`, `core.diagnostics_stage1` or `core.diagnostics_stage2`, `core.plotting`.
+**Depends on:** `models`, `core.io`, `core.diagnostics_stage1` or `core.diagnostics_stage2`, `core.plotting`, **`tqdm`**.
 
 ### 6.2 `experiments.sweep`
 
-Merges sweep YAML into nested per-run dicts; calls **`experiments.run`** programmatically (no `subprocess`).
+Merges sweep YAML into nested per-run dicts; calls **`experiments.run.run_one`** programmatically (no `subprocess`). **CLI** mirrors **`--log-level`** / **`--no-progress`**; **`tqdm`** wraps the combination list (outer bar) while each inner run may show its own chunk bar unless disabled.
 
 ---
 
@@ -396,7 +404,7 @@ Merges sweep YAML into nested per-run dicts; calls **`experiments.run`** program
 
 ## 8. `examples/reproduce_canonical.py`
 
-Calls **`experiments.run`** with eight nested template paths (post Phase 4 conversion).
+Calls **`experiments.run.run_one`** on eight nested template paths (Phase 4 canonical set). Environment: **`CP_REPRODUCE_MINI`**, **`CP_LOG_LEVEL`**, **`CP_NO_PROGRESS`** (see README Quick start).
 
 ---
 
