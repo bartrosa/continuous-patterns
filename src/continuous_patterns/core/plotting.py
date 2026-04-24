@@ -282,6 +282,77 @@ def plot_fields_final(
     return out
 
 
+def write_evolution_gif(
+    snapshots: list[tuple[float, np.ndarray]],
+    path: Path | str,
+    *,
+    L: float,
+    R: float,
+    fps: int = 10,
+    field_name: str = "phi_m",
+) -> Path | None:
+    """Write an animated GIF of scalar field evolution (``phi_m`` slices).
+
+    Parameters
+    ----------
+    snapshots
+        ``(t, field)`` pairs with ``field`` shape ``(n, n)`` on the physical grid.
+    path
+        Output ``.gif`` path.
+    L, R
+        Domain size and cavity radius (circle overlay skipped when ``R <= 0``).
+    fps
+        Frames per second for :class:`matplotlib.animation.PillowWriter`.
+    field_name
+        Label used in the frame title.
+    """
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    out = Path(path)
+    if not snapshots:
+        return None
+
+    stack = np.stack([np.asarray(f, dtype=np.float64) for _, f in snapshots], axis=0)
+    vmin = float(np.min(stack))
+    vmax = float(np.max(stack))
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+        vmin, vmax = 0.0, 1.0
+
+    fig, ax = plt.subplots(figsize=(5.0, 5.0), constrained_layout=True)
+    first = np.asarray(snapshots[0][1], dtype=np.float64)
+    im = ax.imshow(
+        first.T,
+        origin="lower",
+        extent=(0.0, L, 0.0, L),
+        vmin=vmin,
+        vmax=vmax,
+        cmap="viridis",
+        aspect="equal",
+    )
+    if R > 0.0:
+        circ = Circle(
+            (0.5 * L, 0.5 * L),
+            R,
+            fill=False,
+            linestyle="--",
+            edgecolor="w",
+            linewidth=1.0,
+        )
+        ax.add_patch(circ)
+    title = ax.set_title(f"{field_name}, t={snapshots[0][0]:.3g}")
+
+    def _update(frame_idx: int):
+        t_i, arr = snapshots[frame_idx]
+        im.set_data(np.asarray(arr, dtype=np.float64).T)
+        title.set_text(f"{field_name}, t={float(t_i):.3g}")
+        return (im, title)
+
+    anim = FuncAnimation(fig, _update, frames=len(snapshots), blit=False)
+    anim.save(str(out), writer=PillowWriter(fps=fps))
+    plt.close(fig)
+    return out
+
+
 def parse_run_stamp_utc(stamp: str) -> str | None:
     """Parse ``YYYYMMDDTHHMMSSZ`` run directory name to ``YYYY-MM-DD HH:MM UTC``."""
     try:

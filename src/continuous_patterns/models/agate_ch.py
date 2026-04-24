@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 import time
 from typing import Any
 
@@ -512,7 +513,11 @@ def simulate(
         n_total,
     )
 
-    seed = int(cfg.get("seed", 0))
+    exp_seed = cfg.get("experiment", {})
+    if isinstance(exp_seed, dict) and "seed" in exp_seed:
+        seed = int(exp_seed["seed"])
+    else:
+        seed = int(cfg.get("seed", 0))
     key = jax.random.PRNGKey(seed)
     key, k_ic = jax.random.split(key)
     state = build_initial_state(cfg, geom, prm, k_ic)
@@ -551,6 +556,20 @@ def simulate(
     snap_every = int(tcfg.get("snapshot_every", 10**9))
     if snap_every < 1:
         snap_every = 1
+
+    record_gif = bool(outcfg.get("record_evolution_gif", False))
+    max_gif_frames = int(outcfg.get("gif_max_frames", 120))
+    gif_every_steps = snap_every
+    next_gif_step: int | None = None
+    if record_gif:
+        meta["gif_snapshots"] = []
+        n_est_snaps = max(1, n_total // snap_every)
+        if n_est_snaps > max_gif_frames:
+            gif_every_steps = max(snap_every, int(math.ceil(n_total / max_gif_frames)))
+        next_gif_step = gif_every_steps
+        meta["gif_snapshots"].append(
+            (0.0, np.asarray(jax.device_get(state[0]), dtype=np.float64).copy())
+        )
 
     run_chunk = make_chunk_runner(geom, prm, dt)
 
@@ -610,6 +629,12 @@ def simulate(
                     int(next_snap_step),
                 )
                 next_snap_step += snap_every
+
+            if record_gif and next_gif_step is not None:
+                while next_gif_step <= current_step and next_gif_step <= n_total:
+                    pm_g = np.asarray(jax.device_get(state[0]), dtype=np.float64)
+                    meta["gif_snapshots"].append((float(next_gif_step * dt), pm_g.copy()))
+                    next_gif_step += gif_every_steps
     finally:
         pbar.close()
 
@@ -629,6 +654,12 @@ def simulate(
     meta["M_total_initial"] = m_total_initial
     meta["M_total_final"] = m_total_final
     meta["cumulative_dirichlet_injection"] = cumulative_injection
+
+    if record_gif and meta.get("gif_snapshots"):
+        snaps: list[tuple[float, np.ndarray]] = meta["gif_snapshots"]
+        last_t = float(snaps[-1][0])
+        if abs(last_t - t_final) > 1e-6 * max(abs(t_final), 1.0):
+            snaps.append((t_final, pm_f.copy()))
 
     if bool(outcfg.get("record_spectral_mass_diagnostic", False)):
         try:

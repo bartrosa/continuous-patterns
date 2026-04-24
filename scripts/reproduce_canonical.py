@@ -1,83 +1,95 @@
 #!/usr/bin/env python3
-"""Reproduce canonical agate morphologies from nested templates.
+"""Reproduce eight canonical paper-v2 runs via ``continuous_patterns.experiments.run``.
 
-Intended for:
+Runs are driven as subprocesses (``uv run python -m …``) from the repository root
+so layered config paths and ``experiments/solver_settings.yaml`` resolve correctly.
 
-- Phase 4 regeneration against archived baselines (GPU, production ``n``, ``T``)
-- Demonstration of the programmatic API (vs CLI)
+Environment:
 
-Default uses full template parameters (typically ``n=512``, ``T=10000``). For a
-short local smoke, set ``CP_REPRODUCE_MINI=1`` to cap grid size and horizon.
-
-Each run prints wall time (seconds) for the user's regeneration log.
-
-Environment overrides: ``CP_LOG_LEVEL`` (default ``INFO``), ``CP_NO_PROGRESS=1``
-to disable tqdm bars.
+- ``CP_REPRODUCE_MINI=1`` — run a three-run subset with ``CP_OVERRIDE_T=250`` for a quicker check.
+- ``CP_OVERRIDE_T`` — optional horizon override (seconds); applied by ``run.py`` after load.
+- ``CP_LOG_LEVEL`` — passed as ``--log-level`` (default ``INFO``).
+- ``CP_NO_PROGRESS=1`` — adds ``--no-progress``.
 """
 
 from __future__ import annotations
 
 import os
-import time
+import subprocess
+import sys
 from pathlib import Path
 
-from continuous_patterns.core.io import load_run_config
-from continuous_patterns.experiments.run import run_one
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE_DIR = _REPO_ROOT / "src" / "continuous_patterns" / "experiments" / "templates"
-_LOG_LEVEL = os.environ.get("CP_LOG_LEVEL", "INFO")
-_SHOW_PROGRESS = os.environ.get("CP_NO_PROGRESS", "0") != "1"
+CANONICAL_DIR = _REPO_ROOT / "experiments" / "canonical"
+RESULTS_DIR = _REPO_ROOT / "results" / "canonical"
 
 CANONICAL_BASELINES = [
-    "agate_ch_baseline",
-    "stress_off",
-    "validation_uniform_uniaxial_calibrated",
-    "validation_pure_shear_calibrated",
-    "validation_biaxial_calibrated",
-    "stress_flamant_B_0_25",
-    "stress_pressure_gradient_0_25",
+    "no_pinning",
+    "ratchet_only",
+    "medium_pinning",
+    "strong_pinning",
+    "medium_pinning_seed123",
+    "stress_uniform_biaxial",
+    "stress_flamant",
     "agate_stage2_gamma_5",
 ]
 
-
-def reproduce_one(name: str, results_root: Path) -> float:
-    """Load template ``{name}.yaml``, optionally downsize, run, write artifacts.
-
-    Returns
-    -------
-    float
-        Wall time in seconds for the ``run_one`` call.
-    """
-    cfg_path = TEMPLATE_DIR / f"{name}.yaml"
-    cfg = load_run_config(cfg_path)
-    if os.environ.get("CP_REPRODUCE_MINI", "0") == "1":
-        cfg["geometry"]["n"] = min(int(cfg["geometry"]["n"]), 32)
-        cfg["time"]["T"] = min(float(cfg["time"]["T"]), 2.0)
-    print(f"Running {name}...")
-    t0 = time.perf_counter()
-    result = run_one(
-        cfg,
-        results_root=results_root,
-        show_progress=_SHOW_PROGRESS,
-        log_level=_LOG_LEVEL,
-    )
-    wall_s = time.perf_counter() - t0
-    assert result.paths is not None
-    print(f"  → {result.paths.root}")
-    print(f"  wall time: {wall_s:.1f} s")
-    return wall_s
+_mini = os.environ.get("CP_REPRODUCE_MINI", "").strip().lower()
+if _mini in {"1", "true", "yes"}:
+    CANONICAL_BASELINES = ["no_pinning", "medium_pinning", "agate_stage2_gamma_5"]
+    OVERRIDE_T = 250.0
+else:
+    OVERRIDE_T = None
 
 
-def main() -> None:
-    """Run all entries in :data:`CANONICAL_BASELINES` sequentially."""
-    results_root = _REPO_ROOT / "results" / "canonical"
-    results_root.mkdir(parents=True, exist_ok=True)
-    total_s = 0.0
+def run_one(name: str) -> int:
+    cfg_path = CANONICAL_DIR / f"{name}.yaml"
+    if not cfg_path.is_file():
+        print(f"[skip] {name}: {cfg_path} not found", file=sys.stderr)
+        return 1
+
+    print(f"\n=== {name} ===")
+    cmd = [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "continuous_patterns.experiments.run",
+        "--config",
+        str(cfg_path),
+        "--out-dir",
+        str(RESULTS_DIR),
+        "--log-level",
+        os.environ.get("CP_LOG_LEVEL", "INFO"),
+    ]
+    if os.environ.get("CP_NO_PROGRESS", "0") == "1":
+        cmd.append("--no-progress")
+
+    env = dict(os.environ)
+    if OVERRIDE_T is not None:
+        env["CP_OVERRIDE_T"] = str(OVERRIDE_T)
+
+    proc = subprocess.run(cmd, cwd=str(_REPO_ROOT), env=env)
+    return int(proc.returncode)
+
+
+def main() -> int:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    failed: list[str] = []
     for name in CANONICAL_BASELINES:
-        total_s += reproduce_one(name, results_root)
-    print(f"Total wall time (all runs): {total_s:.1f} s")
+        rc = run_one(name)
+        if rc != 0:
+            failed.append(name)
+
+    print("\n" + "=" * 50)
+    if failed:
+        print(f"FAILED: {len(failed)} of {len(CANONICAL_BASELINES)}")
+        for f in failed:
+            print(f"  - {f}")
+        return 1
+    print(f"SUCCESS: all {len(CANONICAL_BASELINES)} baselines completed")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

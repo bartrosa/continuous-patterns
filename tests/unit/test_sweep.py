@@ -14,15 +14,7 @@ from continuous_patterns.experiments.sweep import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_GAMMA_SWEEP_TEMPLATE = (
-    _REPO_ROOT
-    / "src"
-    / "continuous_patterns"
-    / "experiments"
-    / "templates"
-    / "sweeps"
-    / "gamma_scan.yaml"
-)
+_GAMMA_SWEEP_TEMPLATE = _REPO_ROOT / "experiments" / "sweeps" / "gamma_scan.yaml"
 
 
 def _write_minimal_agate_ch_config(path: Path) -> None:
@@ -117,8 +109,8 @@ def test_sweep_cli_smoke(tmp_path: Path) -> None:
     sweep_cfg["grid"]["physics.gamma"] = [1.0, 2.0]
     sweep_cfg["overrides"]["geometry.n"] = 16
     sweep_cfg["overrides"]["time.T"] = 0.5
-    _tpl = _REPO_ROOT / "src" / "continuous_patterns" / "experiments" / "templates"
-    sweep_cfg["sweep"]["base_config"] = str(_tpl / "agate_ch_baseline.yaml")
+    _canonical = _REPO_ROOT / "experiments" / "canonical"
+    sweep_cfg["sweep"]["base_config"] = str(_canonical / "medium_pinning.yaml")
 
     sweep_path = tmp_path / "tiny_sweep.yaml"
     sweep_path.write_text(yaml.safe_dump(sweep_cfg, sort_keys=False), encoding="utf-8")
