@@ -1,0 +1,43 @@
+experiment:
+  name: agate_ch_baseline
+  model: agate_ch
+  seed: 42
+
+geometry:
+  type: circular_cavity
+  L: 200.0
+  R: 80.0
+  n: 512
+
+physics:
+  W: 1.0
+  gamma: 3.0
+  kappa_x: 0.5
+  kappa_y: 0.5
+  M_m: 0.01
+  M_c: 1.0
+  D_c: 1.0
+  k_rxn: 0.5
+  c_sat: 0.2
+  c_0: 1.0
+  c_ostwald: 0.6
+  w_ostwald: 0.1
+  lambda_bar: 10.0
+  use_ratchet: true
+  phi_m_ratchet_low: 0.3
+  phi_m_ratchet_high: 0.5
+
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+
+time:
+  dt: 0.01
+  T: 10000.0
+  snapshot_every: 500
+
+output:
+  save_final_state: true
+  flux_sample_dt: 2.0
+  record_spectral_mass_diagnostic: false

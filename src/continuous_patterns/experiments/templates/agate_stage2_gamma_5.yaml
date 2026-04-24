@@ -1,0 +1,46 @@
+experiment:
+  name: agate_stage2_gamma_5
+  model: agate_stage2
+  seed: 42
+
+geometry:
+  type: circular_cavity
+  L: 200.0
+  R: 0.0
+  n: 512
+
+physics:
+  W: 1.0
+  gamma: 5.0
+  kappa_x: 0.5
+  kappa_y: 0.5
+  M_m: 1.0
+  M_c: 1.0
+  D_c: 0.0
+  lambda_bar: 10.0
+  k_rxn: 0.0
+  c_sat: 0.0
+  c_0: 0.0
+  c_ostwald: 0.5
+  w_ostwald: 0.1
+  use_ratchet: false
+
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+
+time:
+  dt: 0.01
+  T: 10000.0
+  snapshot_every: 1000
+
+output:
+  save_final_state: true
+
+initial:
+  phi_m_init: 0.5
+  phi_m_noise: 0.05
+  phi_c_init: 0.5
+  phi_c_noise: 0.05
+  c_init: 0.0
