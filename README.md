@@ -51,11 +51,13 @@ Each sweep creates `results/sweeps/<name>_<timestamp>/` with a `manifest.json`, 
 
 ### Programmatic baseline smoke
 
-[`examples/reproduce_canonical.py`](examples/reproduce_canonical.py) loads shipped templates and calls `run_one`. By default `CP_REPRODUCE_MINI=1` caps grid size and horizon for a short smoke; set `CP_REPRODUCE_MINI=0` for full template parameters.
+[`examples/reproduce_canonical.py`](examples/reproduce_canonical.py) loads shipped templates and calls `run_one` for all eight Phase 4 canonical baselines (production `n`/`T` by default). Set `CP_REPRODUCE_MINI=1` for a short local smoke.
 
 ```bash
-CP_REPRODUCE_MINI=1 uv run python examples/reproduce_canonical.py
+uv run python examples/reproduce_canonical.py
 ```
+
+Quick smoke (small ``n`` / short ``T``): `CP_REPRODUCE_MINI=1 uv run python examples/reproduce_canonical.py`.
 
 ## Results directory layout
 
