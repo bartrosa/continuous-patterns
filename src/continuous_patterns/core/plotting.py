@@ -6,6 +6,7 @@ or ``experiments`` (``docs/ARCHITECTURE.md`` §3.7).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -351,6 +352,86 @@ def write_evolution_gif(
     anim.save(str(out), writer=PillowWriter(fps=fps))
     plt.close(fig)
     return out
+
+
+def plot_jablczynski(
+    jab_metrics: dict[str, Any],
+    path: Path,
+    *,
+    title: str = "",
+    radial_centers: np.ndarray | Sequence[float] | None = None,
+    radial_profile: np.ndarray | Sequence[float] | None = None,
+) -> None:
+    """Three-panel Jabłczyński figure (Liesegang-style); sparse bands → annotated fallback.
+
+    Panel 1: log–log ``d_n`` vs ``x_n``; panel 2: classical ``Q_n = x_{n+1}/x_n`` vs ``n``;
+    panel 3: ``d_n`` vs ``n``. When ``n_bands < 3``, writes a single-panel figure with an
+    ``INSUFFICIENT BANDS`` note and optional radial profile overlay.
+    """
+    n_bands = int(jab_metrics.get("n_bands", 0))
+    positions = np.asarray(jab_metrics.get("peak_positions", []), dtype=np.float64)
+    spacings = np.asarray(jab_metrics.get("spacings", []), dtype=np.float64)
+    Q_positions = np.asarray(jab_metrics.get("Q_positions", []), dtype=np.float64)
+    q_cv = float(jab_metrics.get("q_cv", float("nan")))
+    Q_cv = float(jab_metrics.get("Q_cv", float("nan")))
+
+    if n_bands < 3:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        if radial_centers is not None and radial_profile is not None:
+            rc = np.asarray(radial_centers, dtype=np.float64).ravel()
+            rp = np.asarray(radial_profile, dtype=np.float64).ravel()
+            if rc.size == rp.size and rc.size > 0:
+                ax.plot(rc, rp, "k-", lw=1.2)
+                ax.set_xlabel(r"$r$")
+                ax.set_ylabel(r"$\phi_m + \phi_c$ (azimuthal mean)")
+        ax.annotate(
+            f"INSUFFICIENT BANDS (N={n_bands})",
+            xy=(0.5, 0.92),
+            xycoords="axes fraction",
+            ha="center",
+            fontsize=11,
+            bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.9},
+        )
+        ax.set_title(title if title else "Jabłczyński analysis")
+        fig.tight_layout()
+        fig.savefig(path, dpi=140)
+        plt.close(fig)
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
+
+    if spacings.size > 0 and positions.size >= spacings.size + 1:
+        x_n = positions[1:]
+        d_n = spacings
+        axes[0].loglog(x_n, d_n, "o-", color="tab:blue")
+        axes[0].set_xlabel(r"$x_n$")
+        axes[0].set_ylabel(r"$d_n = x_{n+1} - x_n$")
+        axes[0].set_title("Spacing vs position (log-log)")
+        axes[0].grid(True, which="both", alpha=0.3)
+
+    if Q_positions.size > 0:
+        n_index = np.arange(1, len(Q_positions) + 1)
+        axes[1].plot(n_index, Q_positions, "o-", color="tab:orange")
+        axes[1].axhline(1.0, color="gray", linestyle=":", alpha=0.5)
+        axes[1].set_xlabel(r"$n$")
+        axes[1].set_ylabel(r"$Q_n = x_{n+1}/x_n$")
+        cv_label = f"{Q_cv * 100:.1f}%" if Q_cv == Q_cv else "n/a"
+        axes[1].set_title(f"Classical Jabłczyński ratio (CV={cv_label})")
+        axes[1].grid(True, alpha=0.3)
+
+    if spacings.size > 0:
+        n_index = np.arange(1, len(spacings) + 1)
+        axes[2].plot(n_index, spacings, "o-", color="tab:green")
+        axes[2].set_xlabel(r"$n$")
+        axes[2].set_ylabel(r"$d_n$ (spacing)")
+        cv_s = f"{q_cv * 100:.1f}%" if q_cv == q_cv else "n/a"
+        axes[2].set_title(f"Spacings (CV={cv_s})")
+        axes[2].grid(True, alpha=0.3)
+
+    fig.suptitle(title if title else f"Jabłczyński analysis — N={n_bands} bands")
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
 
 
 def parse_run_stamp_utc(stamp: str) -> str | None:

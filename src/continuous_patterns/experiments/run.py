@@ -29,7 +29,11 @@ from continuous_patterns.core.io import (
     save_summary,
     write_figures_final,
 )
-from continuous_patterns.core.plotting import parse_run_stamp_utc, write_evolution_gif
+from continuous_patterns.core.plotting import (
+    parse_run_stamp_utc,
+    plot_jablczynski,
+    write_evolution_gif,
+)
 from continuous_patterns.core.types import SimResult
 from continuous_patterns.models import agate_ch, agate_stage2
 
@@ -150,6 +154,18 @@ def run_one(
                 include_params_panel=include_panel,
             )
             out = cfg.get("output", {})
+            if bool(out.get("save_jablczynski_plot", False)):
+                jab = result.diagnostics.get("jab_canonical")
+                if isinstance(jab, dict) and jab:
+                    meta = result.meta if isinstance(result.meta, dict) else {}
+                    plot_jablczynski(
+                        jab,
+                        paths.jablczynski_plot,
+                        title=f"{exp_name} — Jabłczyński analysis",
+                        radial_centers=meta.get("radial_centers"),
+                        radial_profile=meta.get("radial_profile"),
+                    )
+                    logger.info("Wrote Jabłczyński plot to %s", paths.jablczynski_plot)
             if bool(out.get("save_snapshots_h5", False)):
                 h5_snaps = result.meta.get("h5_snapshots")
                 if isinstance(h5_snaps, list) and h5_snaps:

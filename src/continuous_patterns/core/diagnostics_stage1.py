@@ -257,6 +257,8 @@ def jab_metrics_canonical_slice(
             "spacings": [],
             "q_ratios": [],
             "q_cv": 0.0,
+            "Q_positions": [],
+            "Q_cv": 0.0,
             "spearman_d_vs_index": float("nan"),
             "used_field": "phi_c" if use_c else "phi_m",
         }
@@ -271,6 +273,14 @@ def jab_metrics_canonical_slice(
         if spacings[i - 1] > 1e-12:
             q_ratios.append(spacings[i] / spacings[i - 1])
     q_cv = float(np.std(q_ratios) / (np.mean(q_ratios) + 1e-30)) if q_ratios else 0.0
+
+    pos_arr = np.asarray(peak_x, dtype=np.float64)
+    if pos_arr.size > 1:
+        Q_positions = (pos_arr[1:] / np.maximum(pos_arr[:-1], 1e-30)).tolist()
+    else:
+        Q_positions = []
+    Q_cv = float(np.std(Q_positions) / (np.mean(Q_positions) + 1e-30)) if Q_positions else 0.0
+
     if len(spacings) >= 2:
         rho, _p = stats.spearmanr(np.arange(len(spacings), dtype=np.float64), np.asarray(spacings))
         spear = float(rho) if not np.isnan(rho) else float("nan")
@@ -282,6 +292,8 @@ def jab_metrics_canonical_slice(
         "spacings": spacings,
         "q_ratios": q_ratios,
         "q_cv": q_cv,
+        "Q_positions": Q_positions,
+        "Q_cv": Q_cv,
         "spearman_d_vs_index": spear,
         "used_field": "phi_c" if use_c else "phi_m",
     }

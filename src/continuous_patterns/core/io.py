@@ -91,6 +91,7 @@ class OutputSpec(BaseModel):
     record_spectral_mass_diagnostic: bool = False
     record_evolution_gif: bool = False
     save_snapshots_h5: bool = False
+    save_jablczynski_plot: bool = False
     gif_max_frames: int = Field(default=120, ge=8, le=500)
     gif_fps: int = Field(default=10, ge=1, le=60)
     include_params_panel: bool = True
@@ -121,6 +122,7 @@ class ResultPaths:
     final_state_npz: Path
     log_file: Path
     snapshots_h5: Path
+    jablczynski_plot: Path
 
 
 _SOLVER_SETTINGS_DEFAULT = Path("experiments/solver_settings.yaml")
@@ -249,6 +251,7 @@ def allocate_run_dir(*, experiment_name: str, results_root: Path) -> ResultPaths
         final_state_npz=root / "final_state.npz",
         log_file=root / "run.log",
         snapshots_h5=root / "snapshots.h5",
+        jablczynski_plot=root / "jablczynski.png",
     )
 
 

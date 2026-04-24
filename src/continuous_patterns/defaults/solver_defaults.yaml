@@ -14,6 +14,7 @@ output:
   record_spectral_mass_diagnostic: true
   record_evolution_gif: false
   save_snapshots_h5: false
+  save_jablczynski_plot: false
   # Enabling ``save_snapshots_h5`` or ``record_evolution_gif`` shrinks the JAX sub-chunk to
   # min(chunk_size, time.snapshot_every), so snapshot cadence aligns with device state.
   include_params_panel: true

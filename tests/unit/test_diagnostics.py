@@ -46,6 +46,14 @@ def test_jab_canonical_slice_detects_synthetic_bands() -> None:
     phi_m = 0.1 * np.ones((n, n), dtype=np.float64)
     m = jab_metrics_canonical_slice(phi_m, phi_c, L=L, R=0.45 * L)
     assert m["n_bands"] >= 6
+    assert "Q_positions" in m and "Q_cv" in m
+    peaks = np.asarray(m["peak_positions"], dtype=np.float64)
+    if peaks.size > 1:
+        assert len(m["Q_positions"]) == m["n_bands"] - 1
+        np.testing.assert_allclose(
+            np.asarray(m["Q_positions"], dtype=np.float64),
+            peaks[1:] / peaks[:-1],
+        )
 
 
 def test_structure_factor_radial_positive() -> None:
