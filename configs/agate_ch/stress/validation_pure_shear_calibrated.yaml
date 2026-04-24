@@ -1,6 +1,6 @@
-# Experiment 6 — Flamant two-point, reduced σ₀ for stability vs κ₀ (B·σ₀ ≪ κ₀).
+# Phase 3 — calibrated pure shear (σ_xy=0.25), T=10000.
 experiment:
-  name: stress_flamant_B_0_1
+  name: validation_pure_shear_calibrated
   seed: 42
 
 grid:
@@ -24,8 +24,8 @@ physics:
   phi_m_ratchet_low: 0.3
   phi_m_ratchet_high: 0.5
   use_ratchet: true
-  stress_mode: flamant_two_point
-  sigma_0: 0.1
+  stress_mode: pure_shear
+  sigma_0: 0.25
   stress_coupling_B: 1.0
   stress_eps_factor: 3.0
 

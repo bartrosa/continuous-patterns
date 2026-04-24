@@ -90,6 +90,11 @@ def build_geometry(
             from continuous_patterns.agate_ch.stress_fields import pure_shear_field
 
             sigma_xx, sigma_yy, sigma_xy = pure_shear_field(float(L), int(n), float(sigma_0))
+    elif stress_mode == "uniform_biaxial":
+        if float(sigma_0) != 0.0:
+            from continuous_patterns.agate_ch.stress_fields import uniform_biaxial_field
+
+            sigma_xx, sigma_yy, sigma_xy = uniform_biaxial_field(float(L), int(n), float(sigma_0))
     elif stress_mode == "pressure_gradient":
         if float(sigma_0) != 0.0:
             from continuous_patterns.agate_ch.stress_fields import pressure_gradient_field

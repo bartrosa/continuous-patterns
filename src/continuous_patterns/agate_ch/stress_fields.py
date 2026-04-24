@@ -150,6 +150,20 @@ def pure_shear_field(
     return z, z, sxy
 
 
+def uniform_biaxial_field(
+    L: float, n: int, sigma_0: float
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Uniform isotropic compression: ``σ_xx = σ_yy = σ₀``, ``σ_xy = 0``.
+
+    Pure hydrostatic stress. ``Tr(σ) = 2 σ₀``; deviatoric part is zero.
+    Negative control for ψ-split coupling — no directional preference in ``σ``.
+    """
+    del L
+    s = jnp.full((n, n), jnp.float32(sigma_0), dtype=jnp.float32)
+    z = jnp.zeros((n, n), dtype=jnp.float32)
+    return s, s, z
+
+
 def pressure_gradient_field(
     L: float, n: int, sigma_0: float
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:

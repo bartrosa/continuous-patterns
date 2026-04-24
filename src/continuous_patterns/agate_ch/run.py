@@ -22,6 +22,7 @@ import h5py
 import jax
 import numpy as np
 import yaml
+from scipy.ndimage import uniform_filter
 
 from continuous_patterns.agate_ch.diagnostics import (
     analyse_all_snapshots,
@@ -67,6 +68,16 @@ from continuous_patterns.agate_ch.solver import (
 )
 
 
+def cavity_disk_mask(*, L: float, R: float, n: int) -> np.ndarray:
+    """Boolean mask ``r < R`` on the cell-centred periodic grid."""
+    dx = L / n
+    xc = L / 2.0
+    xs = (np.arange(n, dtype=np.float64) + 0.5) * dx
+    xv, yv = np.meshgrid(xs, xs, indexing="ij")
+    rv = np.sqrt((xv - xc) ** 2 + (yv - xc) ** 2)
+    return rv < R
+
+
 def cavity_phi_sum_extrema(
     phi_m: np.ndarray, phi_c: np.ndarray, *, L: float, R: float
 ) -> tuple[float, float]:
@@ -74,17 +85,145 @@ def cavity_phi_sum_extrema(
     pm = np.asarray(phi_m, dtype=np.float64)
     pc = np.asarray(phi_c, dtype=np.float64)
     n = pm.shape[0]
-    dx = L / n
-    xc = L / 2.0
-    xs = (np.arange(n, dtype=np.float64) + 0.5) * dx
-    xv, yv = np.meshgrid(xs, xs, indexing="ij")
-    rv = np.sqrt((xv - xc) ** 2 + (yv - xc) ** 2)
-    mask = rv < R
+    mask = cavity_disk_mask(L=L, R=R, n=n)
     s = pm + pc
     vals = s[mask]
     if vals.size == 0:
         return float("nan"), float("nan")
     return float(np.max(vals)), float(np.min(vals))
+
+
+def cavity_phi_component_max(phi: np.ndarray, *, L: float, R: float) -> float:
+    """Max of a phase field on ``r < R``."""
+    a = np.asarray(phi, dtype=np.float64)
+    n = a.shape[0]
+    mask = cavity_disk_mask(L=L, R=R, n=n)
+    vals = a[mask]
+    if vals.size == 0:
+        return float("nan")
+    return float(np.max(vals))
+
+
+def pixel_noise_metric_phi_m(phi_m: np.ndarray, *, L: float, R: float) -> float:
+    """RMS of ``φ_m - box_mean(φ_m)`` (3×3 periodic box) restricted to the cavity."""
+    pm = np.asarray(phi_m, dtype=np.float64)
+    n = pm.shape[0]
+    smooth = uniform_filter(pm, size=3, mode="wrap")
+    res = pm - smooth
+    mask = cavity_disk_mask(L=L, R=R, n=n)
+    vals = res[mask]
+    if vals.size == 0:
+        return float("nan")
+    return float(np.sqrt(np.mean(vals**2)))
+
+
+def fft_psi_anisotropy_ratio(phi_m: np.ndarray, phi_c: np.ndarray, *, L: float, R: float) -> float:
+    """Ratio of low-|kx| to low-|ky| power in ``|FFT(ψ)|²`` with ``ψ=(φ_m−φ_c)χ_disk``.
+
+    ``χ`` is a hard cavity mask (ring discontinuities may add broadband power but the
+    ratio still distinguishes horizontal vs vertical banding). ``>1`` favours
+    horizontal structure, ``<1`` vertical, ``≈1`` isotropic.
+    """
+    pm = np.asarray(phi_m, dtype=np.float64)
+    pc = np.asarray(phi_c, dtype=np.float64)
+    n = pm.shape[0]
+    mask = cavity_disk_mask(L=L, R=R, n=n).astype(np.float64)
+    psi = (pm - pc) * mask
+    F = np.fft.fft2(psi)
+    pwr = np.abs(F) ** 2
+    dx = L / n
+    kx = (2.0 * np.pi * np.fft.fftfreq(n, d=dx))[:, np.newaxis]
+    ky = (2.0 * np.pi * np.fft.fftfreq(n, d=dx))[np.newaxis, :]
+    k_tol = max(8.0 * np.pi / max(L, 1e-12), 1e-9)
+    band_x = np.broadcast_to(np.abs(kx) < k_tol, pwr.shape)
+    band_y = np.broadcast_to(np.abs(ky) < k_tol, pwr.shape)
+    py_axis = float(np.sum(pwr[band_x]))
+    px_axis = float(np.sum(pwr[band_y]))
+    if px_axis <= 1e-30:
+        return float("nan")
+    return py_axis / px_axis
+
+
+def classify_psi_coupling_stability(
+    max_phi_sum: float,
+    pixel_noise: float,
+    *,
+    noise_threshold: float,
+) -> str:
+    """STABLE / MARGINAL / UNSTABLE for ψ-split stress calibration scans."""
+    if max_phi_sum != max_phi_sum:
+        return "UNKNOWN"
+    pn = pixel_noise if pixel_noise == pixel_noise else float("nan")
+    thr = max(float(noise_threshold), 1e-12)
+    if max_phi_sum > 1.3 or (pn == pn and pn > 8.0 * thr):
+        return "UNSTABLE"
+    if max_phi_sum < 1.1 and pn == pn and pn < thr:
+        return "STABLE"
+    if max_phi_sum < 1.3:
+        return "MARGINAL"
+    return "UNSTABLE"
+
+
+def pearson_psi_cavity_masked(
+    phi_m: np.ndarray,
+    phi_c: np.ndarray,
+    phi_m_ref: np.ndarray,
+    phi_c_ref: np.ndarray,
+    *,
+    L: float,
+    R: float,
+) -> dict[str, float]:
+    """Pearson correlation of ``φ_m−φ_c`` vs reference on ``r < R`` (same mask for both)."""
+    n = int(np.asarray(phi_m).shape[0])
+    mask = cavity_disk_mask(L=L, R=R, n=n)
+    a = (np.asarray(phi_m, dtype=np.float64) - np.asarray(phi_c, dtype=np.float64))[mask]
+    b = (np.asarray(phi_m_ref, dtype=np.float64) - np.asarray(phi_c_ref, dtype=np.float64))[mask]
+    if a.size < 16 or b.size != a.size:
+        return {"pearson_r": float("nan"), "n_pixels": float(a.size)}
+    c = np.corrcoef(a, b)
+    return {"pearson_r": float(c[0, 1]), "n_pixels": float(a.size)}
+
+
+def stability_scan_block(
+    pm: np.ndarray,
+    pc: np.ndarray,
+    cfg: dict[str, Any],
+    *,
+    drift_opt_d: float,
+    option_b_pct: float,
+    noise_threshold: float,
+) -> dict[str, Any]:
+    """Scalar diagnostics for ``summary.json`` stability scans."""
+    L = float(cfg["L"])
+    R = float(cfg["R"])
+    mx_sum, mn_sum = cavity_phi_sum_extrema(pm, pc, L=L, R=R)
+    p_noise = pixel_noise_metric_phi_m(pm, L=L, R=R)
+    ani = fft_psi_anisotropy_ratio(pm, pc, L=L, R=R)
+    mx_m = cavity_phi_component_max(pm, L=L, R=R)
+    mx_c = cavity_phi_component_max(pc, L=L, R=R)
+    cls = classify_psi_coupling_stability(mx_sum, p_noise, noise_threshold=noise_threshold)
+    if ani == ani:
+        if ani > 1.35:
+            morph = "fft_horizontal_bias"
+        elif ani < 0.75:
+            morph = "fft_vertical_bias"
+        else:
+            morph = "fft_near_isotropic"
+    else:
+        morph = "fft_anisotropy_nan"
+    return {
+        "max_phi_sum": mx_sum,
+        "min_phi_sum": mn_sum,
+        "option_D_drift_pct": drift_opt_d,
+        "option_B_pct": float(option_b_pct) if option_b_pct == option_b_pct else float("nan"),
+        "max_phi_m": mx_m,
+        "max_phi_c": mx_c,
+        "pixel_noise_metric": p_noise,
+        "anisotropy_metric": ani,
+        "pixel_noise_threshold_used": noise_threshold,
+        "stability_class": cls,
+        "morphology_hint": morph,
+    }
 
 
 def stress_tensor_scalar_stats(cfg: dict[str, Any]) -> dict[str, float]:
@@ -165,6 +304,10 @@ def flatten_nested_cfg(raw: dict[str, Any]) -> dict[str, Any]:
     diag = raw.get("diagnostics") or {}
     for k, v in diag.items():
         out[k] = v
+    if diag.get("minimal_postprocess") is not None:
+        out["minimal_postprocess"] = bool(diag["minimal_postprocess"])
+    if diag.get("stability_pixel_noise_threshold") is not None:
+        out["stability_pixel_noise_threshold"] = float(diag["stability_pixel_noise_threshold"])
     if diag.get("progress_stderr") is not None:
         out["progress"] = bool(diag["progress_stderr"])
     if diag.get("mass_balance_mode") == "spectral_only":
@@ -589,38 +732,42 @@ def run_postprocess(
     _, pt_r = radial_profile(phi_tot, L=L, R=R)
     radial_metrics = band_metrics(rc, pt_r, R)
 
-    plot_fields_final(c, pm, pc, L=L, R=R, path=out_dir / "fields_final.png", cfg=cfg)
-    sm_stress = str(cfg.get("stress_mode", "none"))
-    if sm_stress != "none" and float(cfg.get("sigma_0", 0.0)) != 0.0:
-        from continuous_patterns.agate_ch.stress_viz import save_stress_mode_diagnostic
+    lite = bool(cfg.get("minimal_postprocess"))
 
-        safe = sm_stress.replace("/", "_").replace(" ", "_")
-        save_stress_mode_diagnostic(cfg, out_dir / f"stress_diagnostic_{safe}.png")
-    plot_radial(
-        rc,
-        {"phi_m": pm_r, "phi_c": pc_r, "phi_m+phi_c": pt_r},
-        out_dir / "radial_profile.png",
-        cfg=cfg,
-    )
+    if not lite:
+        plot_fields_final(c, pm, pc, L=L, R=R, path=out_dir / "fields_final.png", cfg=cfg)
+        sm_stress = str(cfg.get("stress_mode", "none"))
+        if sm_stress != "none" and float(cfg.get("sigma_0", 0.0)) != 0.0:
+            from continuous_patterns.agate_ch.stress_viz import save_stress_mode_diagnostic
 
-    frames = [np.asarray(a + b) for _, _, a, b in snaps_full]
-    mx = max(float(np.max(f)) for f in frames) if frames else 1.0
-    frames_n = [np.clip(f / max(mx, 1e-9), 0.0, 1.0) for f in frames]
-    write_animation(frames_n, out_dir / "evolution.mp4", fps=30.0)
-    write_evolution_gif_phi_m(snaps_full, out_dir / "evolution.gif", L=L, R=R)
+            safe = sm_stress.replace("/", "_").replace(" ", "_")
+            save_stress_mode_diagnostic(cfg, out_dir / f"stress_diagnostic_{safe}.png")
+        plot_radial(
+            rc,
+            {"phi_m": pm_r, "phi_c": pc_r, "phi_m+phi_c": pt_r},
+            out_dir / "radial_profile.png",
+            cfg=cfg,
+        )
+
+        frames = [np.asarray(a + b) for _, _, a, b in snaps_full]
+        mx = max(float(np.max(f)) for f in frames) if frames else 1.0
+        frames_n = [np.clip(f / max(mx, 1e-9), 0.0, 1.0) for f in frames]
+        write_animation(frames_n, out_dir / "evolution.mp4", fps=30.0)
+        write_evolution_gif_phi_m(snaps_full, out_dir / "evolution.gif", L=L, R=R)
 
     h5_path = out_dir / "snapshots.h5"
     save_h5(h5_path, snaps_full)
 
     ts = analyse_all_snapshots(h5_path, L=L, R=R, dt=dt, skip_before=500)
-    plot_band_count_evolution(ts["records"], dt, out_dir / "band_count_evolution.png", cfg=cfg)
-    plot_kymograph(
-        ts["kymograph_t"],
-        ts["kymograph_r"],
-        out_dir / "kymograph.png",
-        title=label,
-        cfg=cfg,
-    )
+    if not lite:
+        plot_band_count_evolution(ts["records"], dt, out_dir / "band_count_evolution.png", cfg=cfg)
+        plot_kymograph(
+            ts["kymograph_t"],
+            ts["kymograph_r"],
+            out_dir / "kymograph.png",
+            title=label,
+            cfg=cfg,
+        )
 
     mp = ts["metrics_at_peak"]
     mf = ts["metrics_at_final"]
@@ -629,44 +776,47 @@ def run_postprocess(
     persist = bool(peak_nb > 0 and final_nb >= 0.5 * peak_nb)
 
     pk_time = ts["peak_band_count_time"]
-    peak_title = (
-        f"Jabłczyński at peak band count (t={pk_time}, N={peak_nb}) — "
-        f"{mp.get('classification', '')}"
-    )
-    plot_jablczynski(
-        mp,
-        out_dir / "jablczynski_timeresolved.png",
-        title=peak_title,
-        radial_centers=ts["peak_radial_centers"],
-        radial_profile_arr=ts["peak_radial_profile"],
-        cfg=cfg,
-    )
+    if not lite:
+        peak_title = (
+            f"Jabłczyński at peak band count (t={pk_time}, N={peak_nb}) — "
+            f"{mp.get('classification', '')}"
+        )
+        plot_jablczynski(
+            mp,
+            out_dir / "jablczynski_timeresolved.png",
+            title=peak_title,
+            radial_centers=ts["peak_radial_centers"],
+            radial_profile_arr=ts["peak_radial_profile"],
+            cfg=cfg,
+        )
 
-    final_title = f"Jabłczyński at final — {mf.get('classification', '')}"
-    plot_jablczynski(
-        mf,
-        out_dir / "jablczynski.png",
-        title=final_title,
-        radial_centers=rc,
-        radial_profile_arr=pt_r,
-        cfg=cfg,
-    )
+        final_title = f"Jabłczyński at final — {mf.get('classification', '')}"
+        plot_jablczynski(
+            mf,
+            out_dir / "jablczynski.png",
+            title=final_title,
+            radial_centers=rc,
+            radial_profile_arr=pt_r,
+            cfg=cfg,
+        )
 
-    anticorr = moganite_chalcedony_anticorr(pm, pc, L, R)
-    plot_canonical_slice(
-        pm,
-        pc,
-        L=L,
-        R=R,
-        path=out_dir / "canonical_slice.png",
-        n_bands=final_nb,
-        classification=str(mf.get("classification", "")),
-        anticorr=anticorr,
-        cfg=cfg,
-    )
+        anticorr = moganite_chalcedony_anticorr(pm, pc, L, R)
+        plot_canonical_slice(
+            pm,
+            pc,
+            L=L,
+            R=R,
+            path=out_dir / "canonical_slice.png",
+            n_bands=final_nb,
+            classification=str(mf.get("classification", "")),
+            anticorr=anticorr,
+            cfg=cfg,
+        )
 
-    pub_field, _pub_src = choose_pub_field(pm, pc)
-    save_final_pub(pub_field, L=L, R=R, path=out_dir / "final_pub.png", cfg=cfg)
+        pub_field, _pub_src = choose_pub_field(pm, pc)
+        save_final_pub(pub_field, L=L, R=R, path=out_dir / "final_pub.png", cfg=cfg)
+    else:
+        anticorr = moganite_chalcedony_anticorr(pm, pc, L, R)
 
     ovs = overshoot_fraction(pm, pc)
     surf_budget = meta.get("mass_balance_surface_flux") or {}
@@ -792,6 +942,51 @@ def run_postprocess(
     if c_mass_disk is not None:
         summary["c_mass_conservation_disk"] = c_mass_disk
 
+    msw = meta.get("main_silica_window_drifts")
+    if isinstance(msw, dict):
+        summary["main_silica_window_drifts"] = msw
+
+    ref_npz = cfg.get("aniso_10x_reference_npz") or cfg.get("stress_validation_aniso_ref_npz")
+    if ref_npz and str(cfg.get("stress_mode", "none")) == "uniform_uniaxial":
+        rp = Path(str(ref_npz))
+        if not rp.is_absolute():
+            rp = _repo_root() / rp
+        if rp.is_file():
+            z = np.load(rp)
+            corr = pearson_psi_cavity_masked(
+                pm,
+                pc,
+                z["phi_m"],
+                z["phi_c"],
+                L=float(L),
+                R=float(R),
+            )
+            summary["psi_corr_vs_aniso_10x"] = {
+                "reference_npz": str(rp.resolve()),
+                **corr,
+            }
+        else:
+            summary["psi_corr_vs_aniso_10x"] = {
+                "reference_npz": str(rp),
+                "error": "reference_npz_missing",
+                "pearson_r": float("nan"),
+            }
+
+    raw_thr = cfg.get("stability_pixel_noise_threshold")
+    if raw_thr is not None and raw_thr == raw_thr:
+        noise_thr0 = float(raw_thr)
+    else:
+        noise_thr0 = 0.02
+    stab0 = stability_scan_block(
+        pm,
+        pc,
+        cfg,
+        drift_opt_d=drift_opt_d,
+        option_b_pct=mb_option_b,
+        noise_threshold=noise_thr0,
+    )
+    summary["stability_scan"] = stab0
+
     with (out_dir / "summary.json").open("w") as f:
         json.dump(summary, f, indent=2)
 
@@ -802,22 +997,29 @@ def run_postprocess(
             phi_c=np.asarray(pc),
             c=np.asarray(c),
         )
-        final_meta = {
-            "t_final": float(T),
-            "grid": int(cfg["grid"]),
-            "L": L,
-            "R": R,
-            "gamma": float(cfg["gamma"]),
-            "M_m": float(cfg["M_m"]),
-            "M_c": float(cfg["M_c"]),
-            "seed": int(cfg.get("seed", 0)),
-            "enable_reaction": cfg.get("enable_reaction", True),
-            "enable_dirichlet": cfg.get("enable_dirichlet", True),
-            "parameters": cfg,
-        }
-        (out_dir / "final_state_meta.json").write_text(
-            json.dumps(final_meta, indent=2, default=str)
-        )
+        if not lite:
+            final_meta = {
+                "t_final": float(T),
+                "grid": int(cfg["grid"]),
+                "L": L,
+                "R": R,
+                "gamma": float(cfg["gamma"]),
+                "M_m": float(cfg["M_m"]),
+                "M_c": float(cfg["M_c"]),
+                "seed": int(cfg.get("seed", 0)),
+                "enable_reaction": cfg.get("enable_reaction", True),
+                "enable_dirichlet": cfg.get("enable_dirichlet", True),
+                "parameters": cfg,
+            }
+            (out_dir / "final_state_meta.json").write_text(
+                json.dumps(final_meta, indent=2, default=str)
+            )
+
+    if lite and h5_path.is_file():
+        try:
+            h5_path.unlink()
+        except OSError:
+            pass
 
     d_list = mf.get("d") or []
     sp_str = ", ".join(f"{x:.4f}" for x in d_list) if d_list else "(none)"
@@ -829,59 +1031,72 @@ def run_postprocess(
     rho_d = mf.get("spearman_d_vs_index", float("nan"))
     klass = mf.get("classification", "")
 
-    print("")
-    print(f"=== AGATE CH — {label} ===")
-    print(f"Grid: {g_}×{g_}  T: {T}  steps: {n_steps}  wall-clock: {fmt_hms(wall_seconds)}")
-    print(f"Overshoot final: {ovs:.2f}%                     [pass if <1%]")
-    mbd = mb_direct if mb_direct == mb_direct else float("nan")
-    mbp_surf = surf_budget.get("leak_pct")
-    mbp = float(mbp_surf) if mbp_surf is not None and mbp_surf == mbp_surf else float("nan")
-    n_samples = int(surf_budget.get("n_flux_samples", 0))
-    source = str(surf_budget.get("budget_source", "unknown"))
-    mbp_show = f"{mbp:.4f}" if mbp == mbp else "nan"
-    print(
-        f"Mass balance (Option B dense flux): {mbp_show}%     "
-        f"[N={n_samples}, {source}]     [pass if |·|<5%]"
-    )
-    print(f"Mass balance (direct/chunk): {mbd:.6f}%        [tautology check]")
-    if c_mass_disk is not None:
-        cm = c_mass_disk
+    if not lite:
+        print("")
+        print(f"=== AGATE CH — {label} ===")
+        print(f"Grid: {g_}×{g_}  T: {T}  steps: {n_steps}  wall-clock: {fmt_hms(wall_seconds)}")
+        print(f"Overshoot final: {ovs:.2f}%                     [pass if <1%]")
+        mbd = mb_direct if mb_direct == mb_direct else float("nan")
+        mbp_surf = surf_budget.get("leak_pct")
+        mbp = float(mbp_surf) if mbp_surf is not None and mbp_surf == mbp_surf else float("nan")
+        n_samples = int(surf_budget.get("n_flux_samples", 0))
+        source = str(surf_budget.get("budget_source", "unknown"))
+        mbp_show = f"{mbp:.4f}" if mbp == mbp else "nan"
         print(
-            "c mass (full periodic domain): "
-            f"initial={cm['mass_c_full_domain_initial']:.6g}, "
-            f"final={cm['mass_c_full_domain_final']:.6g}, "
-            f"Δ={cm['relative_change_full_domain_percent']:.4f}%"
+            f"Mass balance (Option B dense flux): {mbp_show}%     "
+            f"[N={n_samples}, {source}]     [pass if |·|<5%]"
+        )
+        print(f"Mass balance (direct/chunk): {mbd:.6f}%        [tautology check]")
+        if c_mass_disk is not None:
+            cm = c_mass_disk
+            print(
+                "c mass (full periodic domain): "
+                f"initial={cm['mass_c_full_domain_initial']:.6g}, "
+                f"final={cm['mass_c_full_domain_final']:.6g}, "
+                f"Δ={cm['relative_change_full_domain_percent']:.4f}%"
+            )
+            print(
+                "c mass (disk r<R only): "
+                f"initial={cm['mass_c_disk_initial']:.6g}, "
+                f"final={cm['mass_c_disk_final']:.6g}, "
+                f"Δ={cm['relative_change_disk_percent']:.4f}% "
+                "(may redistribute when c is not projected onto χ)"
+            )
+        print("")
+        print("MULTI-SLICE BAND COUNT:")
+        print(f"  Peak: {peak_nb} at t={pk_time}")
+        print(f"  Final (median of 16 slice/field samples): {final_nb}")
+        print(f"  Persist: {persist}")
+        print("")
+        print("CANONICAL SLICE JABŁCZYŃSKI (final):")
+        print(f"  N peaks: {int(mf.get('N_b', 0))}, spacings: [{sp_str}]")
+        if mq == mq:
+            print(f"  mean(q): {mq:.2f}, CV(q): {cvq_pct:.1f}%, CV(d_n): {cvd_pct:.1f}%")
+        else:
+            print("  mean(q): n/a")
+        if rho_d == rho_d:
+            print(f"  Spearman ρ(d, n): {rho_d:.2f}")
+        else:
+            print("  Spearman ρ(d, n): n/a")
+        print(f"  Classification: {klass}")
+        print("")
+        ac_show = f"{anticorr:.2f}" if anticorr == anticorr else "nan"
+        print(f"MOGANITE/CHALCEDONY ANTI-CORRELATION: {ac_show}")
+        print("  [Agate-like if < -0.3]")
+        print("")
+        print(f"Outputs: {out_dir}/")
+    else:
+        ss = summary.get("stability_scan", {})
+        ani_v = ss.get("anisotropy_metric")
+        ani_txt = (
+            f"{float(ani_v):.4f}" if isinstance(ani_v, (int, float)) and ani_v == ani_v else "nan"
         )
         print(
-            "c mass (disk r<R only): "
-            f"initial={cm['mass_c_disk_initial']:.6g}, "
-            f"final={cm['mass_c_disk_final']:.6g}, "
-            f"Δ={cm['relative_change_disk_percent']:.4f}% "
-            "(may redistribute when c is not projected onto χ)"
+            f"[minimal_postprocess] {label}  wall={fmt_hms(wall_seconds)}  "
+            f"class={ss.get('stability_class')}  max_phi_sum={ss.get('max_phi_sum')}  "
+            f"noise={ss.get('pixel_noise_metric')}  aniso={ani_txt}  -> {out_dir}/",
+            flush=True,
         )
-    print("")
-    print("MULTI-SLICE BAND COUNT:")
-    print(f"  Peak: {peak_nb} at t={pk_time}")
-    print(f"  Final (median of 16 slice/field samples): {final_nb}")
-    print(f"  Persist: {persist}")
-    print("")
-    print("CANONICAL SLICE JABŁCZYŃSKI (final):")
-    print(f"  N peaks: {int(mf.get('N_b', 0))}, spacings: [{sp_str}]")
-    if mq == mq:
-        print(f"  mean(q): {mq:.2f}, CV(q): {cvq_pct:.1f}%, CV(d_n): {cvd_pct:.1f}%")
-    else:
-        print("  mean(q): n/a")
-    if rho_d == rho_d:
-        print(f"  Spearman ρ(d, n): {rho_d:.2f}")
-    else:
-        print("  Spearman ρ(d, n): n/a")
-    print(f"  Classification: {klass}")
-    print("")
-    ac_show = f"{anticorr:.2f}" if anticorr == anticorr else "nan"
-    print(f"MOGANITE/CHALCEDONY ANTI-CORRELATION: {ac_show}")
-    print("  [Agate-like if < -0.3]")
-    print("")
-    print(f"Outputs: {out_dir}/")
 
     return summary, rc, pt_r, ts["kymograph_t"], ts["kymograph_r"]
 

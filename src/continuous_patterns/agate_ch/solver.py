@@ -908,6 +908,15 @@ def integrate_chunks(
     milestones = [1000, 10000, 100000] if cfg.get("diagnose_overshoot", False) else []
     mi = 0
 
+    record_win = bool(cfg.get("record_main_silica_window_drifts"))
+    mass_by_step: dict[int, float] = {0: float(silica0)}
+    barrier_record: set[int] = set()
+    if record_win and n_steps >= 200:
+        mid = n_steps // 2
+        barrier_record = {
+            b for b in (100, mid - 50, mid + 50, n_steps - 100, n_steps) if 0 < b <= n_steps
+        }
+
     if cfg.get("flux_sample_dt") is not None:
         flux_sample_dt = float(cfg["flux_sample_dt"])
     elif cfg.get("flux_sample_every") is not None:
@@ -1033,13 +1042,23 @@ def integrate_chunks(
             if 0 < need <= remaining:
                 state = advance_steps(state, need)
                 remaining -= need
+                if record_win and step_count in barrier_record:
+                    mass_by_step[step_count] = _silica_total(state)
                 _print_diag(step_count, state)
                 mi += 1
                 continue
 
         take = min(chunk_size, remaining)
+        if record_win and barrier_record:
+            nxt = min((b for b in barrier_record if b > step_count), default=None)
+            if nxt is not None:
+                gap = nxt - step_count
+                if gap > 0:
+                    take = min(take, gap)
         state = advance_steps(state, take)
         remaining -= take
+        if record_win and step_count in barrier_record:
+            mass_by_step[step_count] = _silica_total(state)
 
     if bar is not None:
         bar.close()
@@ -1047,6 +1066,8 @@ def integrate_chunks(
     silica1 = float(
         total_silica_jnp(state[0], state[1], state[2], geom.chi, geom.dx, prm.rho_m, prm.rho_c)
     )
+    if record_win and n_steps >= 200:
+        mass_by_step.setdefault(n_steps, float(silica1))
     dx_j = float(geom.dx)
     silica_full_initial = float(
         jax.device_get(
@@ -1166,6 +1187,33 @@ def integrate_chunks(
     }
     if mass_balance_surface_flux is not None:
         meta["mass_balance_surface_flux"] = mass_balance_surface_flux
+
+    if record_win and n_steps >= 200:
+        mid = n_steps // 2
+        ms, me = mid - 50, mid + 50
+
+        def _win_pct(a: int, b: int) -> float:
+            if a not in mass_by_step or b not in mass_by_step:
+                return float("nan")
+            m0 = mass_by_step[a]
+            m1 = mass_by_step[b]
+            den = max(abs(m0), 1e-30)
+            return float(100.0 * (m1 - m0) / den)
+
+        meta["main_silica_window_drifts"] = {
+            "basis": "χ-weighted cavity silica total (same kernel as silica_initial/final)",
+            "first_100_steps_leak_pct": _win_pct(0, 100),
+            "middle_100_steps_leak_pct": _win_pct(ms, me)
+            if ms > 0 and me <= n_steps
+            else float("nan"),
+            "last_100_steps_leak_pct": _win_pct(n_steps - 100, n_steps),
+            "mass_by_step_index": {str(k): float(v) for k, v in sorted(mass_by_step.items())},
+            "window_step_ranges": {
+                "first": [0, 100],
+                "middle": [ms, me],
+                "last": [n_steps - 100, n_steps],
+            },
+        }
     return (*state, meta)
 
 

@@ -14,6 +14,7 @@ from continuous_patterns.agate_ch.stress_fields import (
     kirsch_field,
     pressure_gradient_field,
     pure_shear_field,
+    uniform_biaxial_field,
     uniform_uniaxial_field,
 )
 
@@ -36,6 +37,14 @@ def test_uniform_uniaxial_compression_in_x() -> None:
     sxx, syy, sxy = uniform_uniaxial_field(L, n, s0)
     assert np.allclose(np.asarray(sxx), s0)
     assert np.allclose(np.asarray(syy), 0.0)
+    assert np.allclose(np.asarray(sxy), 0.0)
+
+
+def test_uniform_biaxial_isotropic_diagonal() -> None:
+    L, n, s0 = 200.0, 64, 0.75
+    sxx, syy, sxy = uniform_biaxial_field(L, n, s0)
+    assert np.allclose(np.asarray(sxx), s0)
+    assert np.allclose(np.asarray(syy), s0)
     assert np.allclose(np.asarray(sxy), 0.0)
 
 
