@@ -172,6 +172,31 @@ output:
 - **Determinism:** same seed + same platform + same XLA flags should reproduce **bitwise** or near-bitwise results where JAX guarantees it. **GPU** reductions can be **nondeterministic** at float32 unless `jax_threefry_partitionable` / deterministic flags are set — document platform and any `JAX_*` env vars used for paper runs.
 - **`jax_enable_x64`:** **off** for the main production trajectory (default `float32` state). **On** only inside the **Option D / spectral mass** auxiliary diagnostic path (short blob run), and **on demand** for selected **regression** tests that compare tiny drifts. Do not enable x64 globally in the hot loop without an explicit reason (performance and GPU behavior).
 
+### 2.8 Type discipline — Pydantic at boundaries, dataclass inside
+
+Two separate concerns, two separate tools:
+
+**External input validation (Pydantic v2)** — used in `core/io.py` only. Purpose: validate user-supplied YAML configs, produce clear error messages for malformed input, reject flat legacy formats. This is the **only** place in the codebase where Pydantic models appear.
+
+- `ExperimentSpec`, `RunConfigValidated` in `core/io.py`
+- Permissive by default (`extra="allow"` on nested dicts) to avoid blocking new experiment types during development
+- Will be tightened in Phase 3l: `Literal` types for `experiment.model` and `stress.mode`, required field validation per model, field constraints (e.g. `dt > 0`)
+
+**Runtime types (frozen dataclasses)** — used everywhere else:
+
+- `Geometry`, `SimParams` in `core/imex.py`
+- `SimState`, `SimResult` in `core/types.py`
+- `ResultPaths` in `core/io.py`
+
+Reasons runtime types are **not** Pydantic:
+
+1. **JAX pytree compatibility:** dataclasses register as JAX pytrees via `jax.tree_util` helpers with minimal effort; Pydantic models require custom pytree glue that is fragile across Pydantic versions.
+2. **Performance:** `SimState` is constructed inside `jax.lax.scan` / `fori_loop` hot paths. Pydantic validation on each step adds measurable overhead (milliseconds per step × many steps).
+3. **Trust boundary:** runtime types are built by our own functions (`build_geometry`, `build_sim_params`) from already-validated config. Re-validating inside is redundant.
+4. **Type hint clarity:** `phi_m: jax.Array` in a dataclass is a documentation hint, not a runtime check — which matches how JAX arrays are actually used.
+
+**Rule for new code:** if the object receives data from outside Python (YAML, JSON, CLI args, HTTP), validate with Pydantic at the boundary. If it is constructed internally from already-validated sources, use dataclass. Do not mix.
+
 ---
 
 ## 3. Module reference (`core/`)
@@ -401,7 +426,7 @@ Calls **`experiments.run`** with eight nested template paths (post Phase 4 conve
 
 ### §11.1 — YAML validation: **Pydantic v2**
 
-Nested run configs are validated with **`pydantic` v2** (typed models, discriminated unions / `Literal` for `stress.mode` and `geometry.type`, clear validation errors). This is **required** for `core.io`; hand-rolled ad hoc dict checks are avoided for load paths.
+Nested run configs are validated with **`pydantic` v2** (typed models, discriminated unions / `Literal` for `stress.mode` and `geometry.type`, clear validation errors). This is **required** for `core.io` **only** at the load/save boundary; see **§2.8** for why `Geometry` / `SimParams` / `SimState` remain dataclasses. Hand-rolled ad hoc dict checks are avoided for **I/O** load paths.
 
 ### §11.2 — Snapshot format: **HDF5 only**
 
