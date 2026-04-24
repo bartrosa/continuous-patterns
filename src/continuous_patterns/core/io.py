@@ -1,7 +1,9 @@
 """Nested YAML loading (Pydantic v2), result paths, and artifact writers.
 
 Canonical on-disk layout under ``results/`` per ``docs/ARCHITECTURE.md`` §3.8
-and §5. No flat legacy config ingestion.
+and §5. No flat legacy config ingestion. Run cards are validated with typed
+nested models (``ExperimentSpec``, ``GeometrySpec``, …); ``physics`` and
+``initial`` remain plain dicts until model-specific schemas exist (§2.8).
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import yaml
@@ -26,23 +28,78 @@ _MIGRATION_HINT = (
 
 
 class ExperimentSpec(BaseModel):
-    """Permissive: ``seed`` and future keys allowed until Phase 3l tightening."""
+    """Experiment identity and RNG seed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = "run"
+    model: Literal["agate_ch", "agate_stage2"]
+    seed: int = 42
+
+
+class GeometrySpec(BaseModel):
+    """Domain and cavity grid (Stage II bulk may set ``R: 0``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["circular_cavity"] = "circular_cavity"
+    L: float = Field(gt=0)
+    R: float = Field(ge=0)
+    n: int = Field(gt=0)
+    eps_scale: float = Field(default=2.0, gt=0)
+
+
+class StressSpec(BaseModel):
+    """Prescribed Cauchy stress mode and ψ-coupling strength."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal[
+        "none",
+        "uniform_uniaxial",
+        "uniform_biaxial",
+        "pure_shear",
+        "flamant_two_point",
+        "pressure_gradient",
+        "kirsch",
+    ] = "none"
+    sigma_0: float = 0.0
+    stress_coupling_B: float = 0.0
+    stress_eps_factor: float = Field(default=3.0, gt=0)
+
+
+class TimeSpec(BaseModel):
+    """Horizon and snapshot cadence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dt: float = Field(gt=0)
+    T: float = Field(gt=0)
+    snapshot_every: int = Field(default=500, ge=1)
+
+
+class OutputSpec(BaseModel):
+    """Output toggles (extensible for future diagnostics keys)."""
 
     model_config = ConfigDict(extra="allow")
 
-    name: str = "run"
-    model: str
+    save_final_state: bool = True
+    flux_sample_dt: float | None = None
+    record_spectral_mass_diagnostic: bool = False
 
 
 class RunConfigValidated(BaseModel):
-    """Top-level nested run card (extra sections allowed)."""
+    """Validated nested run card (strict top-level; permissive ``physics`` / ``initial``)."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     experiment: ExperimentSpec
+    geometry: GeometrySpec
     physics: dict[str, Any] = Field(default_factory=dict)
-    grid: dict[str, Any] = Field(default_factory=dict)
-    integration: dict[str, Any] = Field(default_factory=dict)
+    stress: StressSpec = Field(default_factory=StressSpec)
+    time: TimeSpec
+    output: OutputSpec = Field(default_factory=OutputSpec)
+    initial: dict[str, Any] = Field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -56,11 +113,26 @@ class ResultPaths:
 
 
 def load_run_config(path: Path) -> dict[str, Any]:
-    """Load and validate **nested** YAML; reject flat legacy layouts.
+    """Load and validate nested run YAML; reject flat or unknown top-level keys.
 
-    A valid file must contain a mapping ``experiment:`` with nested keys
-    (at least ``model``). Top-level-only keys such as ``grid: 64`` without an
-    ``experiment`` block are rejected.
+    Parameters
+    ----------
+    path
+        Path to ``.yaml`` on disk.
+
+    Returns
+    -------
+    dict
+        Nested configuration (Python primitives and nested dicts).
+
+    Raises
+    ------
+    ValueError
+        If the file is empty, not a mapping, or missing a valid ``experiment`` block.
+    FileNotFoundError
+        If ``path`` does not exist (from ``Path.read_text``).
+    pydantic.ValidationError
+        If the document fails schema validation.
     """
     text = Path(path).read_text(encoding="utf-8")
     raw = yaml.safe_load(text)

@@ -35,7 +35,11 @@ def _minimal_agate_ch_cfg() -> dict:
         },
         "stress": {"mode": "none", "sigma_0": 0.0, "stress_coupling_B": 0.0},
         "time": {"dt": 0.01, "T": 0.2, "snapshot_every": 50},
-        "output": {"save_final_state": True, "flux_sample_dt": 0.1},
+        "output": {
+            "save_final_state": True,
+            "flux_sample_dt": 0.1,
+            "record_spectral_mass_diagnostic": False,
+        },
     }
 
 

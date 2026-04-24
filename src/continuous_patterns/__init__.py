@@ -1,4 +1,4 @@
-"""Continuous-media pattern experiments — JAX demos."""
+"""Agate-style pattern formation — pseudospectral Cahn–Hilliard (JAX)."""
 
 from continuous_patterns.core.spectral import (
     divergence_real,

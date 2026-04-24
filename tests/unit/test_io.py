@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from continuous_patterns.core.io import (
+    RunConfigValidated,
     allocate_run_dir,
     load_run_config,
     save_final_state_npz,
@@ -36,17 +37,30 @@ def test_load_run_config_validates_nested_schema(tmp_path: Path) -> None:
 experiment:
   name: demo
   model: agate_ch
-grid:
-  n: 32
+  seed: 1
+geometry:
+  type: circular_cavity
   L: 4.0
+  R: 1.5
+  n: 32
 physics:
   W: 1.0
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+output:
+  save_final_state: true
 """,
         encoding="utf-8",
     )
     cfg = load_run_config(p)
     assert cfg["experiment"]["model"] == "agate_ch"
-    assert cfg["grid"]["n"] == 32
+    assert cfg["geometry"]["n"] == 32
     assert cfg["physics"]["W"] == 1.0
 
 
@@ -69,15 +83,19 @@ def test_save_summary_writes_valid_json(tmp_path: Path) -> None:
 
 def test_roundtrip_save_load_config_identical(tmp_path: Path) -> None:
     cfg = {
-        "experiment": {"name": "t1", "model": "agate_stage2"},
-        "grid": {"n": 16, "L": 2.0},
-        "physics": {"gamma": 2.0},
-        "integration": {"dt": 0.001},
+        "experiment": {"name": "t1", "model": "agate_stage2", "seed": 7},
+        "geometry": {"type": "circular_cavity", "L": 2.0, "R": 0.0, "n": 16},
+        "physics": {"gamma": 2.0, "W": 1.0},
+        "time": {"dt": 0.001, "T": 0.01, "snapshot_every": 5},
+        "output": {"save_final_state": True},
     }
     path = tmp_path / "config.yaml"
     save_run_config(path, cfg)
     again = load_run_config(path)
-    assert again == cfg
+    assert (
+        RunConfigValidated.model_validate(cfg).model_dump()
+        == RunConfigValidated.model_validate(again).model_dump()
+    )
 
 
 def test_save_final_state_npz_roundtrip(tmp_path: Path) -> None:

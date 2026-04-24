@@ -1,8 +1,8 @@
-"""Model drivers (Stage I agate CH, Stage II bulk, …).
+"""Model composition layer (Stage I cavity CH, Stage II bulk relaxation).
 
-Public API: import submodules explicitly, e.g. ``agate_ch.simulate(cfg)`` or
-``agate_stage2.simulate(cfg)``. ``experiments.run`` dispatches on
-``cfg['experiment']['model']``.
+Import submodules explicitly, e.g. ``from continuous_patterns.models import agate_ch`` then
+``agate_ch.simulate(cfg)``. The CLI in ``continuous_patterns.experiments.run`` dispatches on
+``cfg["experiment"]["model"]``.
 """
 
 from . import agate_ch, agate_stage2
