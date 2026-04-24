@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,10 +14,10 @@ from continuous_patterns.core.masks import (
 )
 
 
-def _cell_xy(*, L: float, n: int) -> tuple[jax.Array, jax.Array]:
+def _cell_xy(*, L: float, n: int, dtype: Any = jnp.float32) -> tuple[jax.Array, jax.Array]:
     dx = L / n
-    ii = jnp.arange(n, dtype=jnp.float64)[:, None]
-    jj = jnp.arange(n, dtype=jnp.float64)[None, :]
+    ii = jnp.arange(n, dtype=dtype)[:, None]
+    jj = jnp.arange(n, dtype=dtype)[None, :]
     x = jnp.broadcast_to((ii + 0.5) * dx, (n, n))
     y = jnp.broadcast_to((jj + 0.5) * dx, (n, n))
     return x, y
@@ -68,7 +70,8 @@ def test_ring_accounting_annulus(cavity_small: dict) -> None:
 
 
 def test_rv_matches_euclidean(cavity_small: dict) -> None:
-    x, y = _cell_xy(L=float(cavity_small["L"]), n=int(cavity_small["n"]))
+    dtype = cavity_small["rv"].dtype
+    x, y = _cell_xy(L=float(cavity_small["L"]), n=int(cavity_small["n"]), dtype=dtype)
     xc = float(cavity_small["xc"])
     yc = float(cavity_small["yc"])
     rv = cavity_small["rv"]

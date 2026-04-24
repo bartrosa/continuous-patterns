@@ -16,6 +16,7 @@ from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
+from jax.typing import DTypeLike
 
 
 def circular_cavity_masks(
@@ -24,6 +25,7 @@ def circular_cavity_masks(
     R: float,
     n: int,
     eps_scale: float = 2.0,
+    dtype: DTypeLike = jnp.float32,
 ) -> dict[str, Array | float | int]:
     """Build smooth circular cavity masks on an ``n × n`` cell-centred grid.
 
@@ -42,6 +44,9 @@ def circular_cavity_masks(
         Grid size per axis.
     eps_scale
         ``ε_χ`` in PHYSICS: transition width scales as ``ε_χ Δx`` (default ``2``).
+    dtype
+        JAX array dtype for mask grids (default ``float32``; use ``float64`` when
+        ``jax_enable_x64`` / ``precision: float64`` is active).
 
     Returns
     -------
@@ -62,7 +67,6 @@ def circular_cavity_masks(
     dx = L / n
     xc = 0.5 * L
     yc = 0.5 * L
-    dtype = jnp.float64
 
     ii = jnp.arange(n, dtype=dtype)[:, None]
     jj = jnp.arange(n, dtype=dtype)[None, :]
