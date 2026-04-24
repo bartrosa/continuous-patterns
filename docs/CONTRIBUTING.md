@@ -29,7 +29,7 @@ See [ARCHITECTURE.md §2.8](ARCHITECTURE.md). In short:
 1. Add `def my_masks(*, L, R, n, ...) -> dict[str, Array | float | int]:` in `core/masks.py` (same keys as `circular_cavity_masks`).
 2. `MASK_BUILDERS["my_geometry"] = my_masks`.
 3. Extend `GeometrySpec.type` in `core/io.py`.
-4. Template YAML under `experiments/templates/`.
+4. Template YAML under `experiments/canonical/`.
 
 ### New diagnostic
 

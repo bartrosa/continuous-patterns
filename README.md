@@ -32,7 +32,7 @@ uv sync --extra dev
 
 ```bash
 uv run python -m continuous_patterns.experiments.run \
-  --config src/continuous_patterns/experiments/templates/agate_ch_baseline.yaml \
+  --config experiments/canonical/medium_pinning.yaml \
   --out-dir results \
   --no-write
 ```
@@ -43,12 +43,13 @@ Optional flags:
 
 - **`--log-level`** — console only: `DEBUG`, `INFO`, `WARNING`, `ERROR` (default `INFO`). The file log stays DEBUG when artifacts are written.
 - **`--no-progress`** — disable **tqdm** chunk progress (models still print nothing per step; progress is per JIT chunk).
+- **`--user-settings`** — optional path to per-machine YAML overrides (default file: `experiments/solver_settings.yaml` when present; see `experiments/solver_settings.example.yaml`).
 
 ### Run a parameter sweep
 
 ```bash
 uv run python -m continuous_patterns.experiments.sweep \
-  --sweep src/continuous_patterns/experiments/templates/sweeps/gamma_scan.yaml \
+  --sweep experiments/sweeps/gamma_scan.yaml \
   --out-dir results
 ```
 
@@ -56,15 +57,17 @@ Each sweep creates `results/sweeps/<name>_<timestamp>/` with a `manifest.json`, 
 
 ### Programmatic baseline smoke
 
-[`examples/reproduce_canonical.py`](examples/reproduce_canonical.py) loads shipped templates and calls `run_one` for all eight Phase 4 canonical baselines (production `n`/`T` by default). Set `CP_REPRODUCE_MINI=1` for a short local smoke.
+[`scripts/reproduce_canonical.py`](scripts/reproduce_canonical.py) runs the eight paper-v2 canonical YAMLs under `experiments/canonical/` via the package CLI (production `n`/`T` by default). Set `CP_REPRODUCE_MINI=1` for a three-run subset with a shorter horizon (`CP_OVERRIDE_T=250`).
 
 ```bash
-uv run python examples/reproduce_canonical.py
+make help
+make test
+uv run python scripts/reproduce_canonical.py
 ```
 
-Quick smoke (small ``n`` / short ``T``): `CP_REPRODUCE_MINI=1 uv run python examples/reproduce_canonical.py`.
+Quick smoke (three canonical names, ``T`` capped via ``CP_OVERRIDE_T=250``): `CP_REPRODUCE_MINI=1 uv run python scripts/reproduce_canonical.py` or `make mini`.
 
-Environment variables for that script: **`CP_LOG_LEVEL`** (default `INFO`), **`CP_NO_PROGRESS=1`** to turn off tqdm, same semantics as the CLI flags above.
+Environment variables for that script: **`CP_LOG_LEVEL`** (default `INFO`), **`CP_NO_PROGRESS=1`** to turn off tqdm (passed through as CLI flags), and **`CP_OVERRIDE_T`** (optional horizon override; set automatically in mini mode).
 
 ## Results directory layout
 
@@ -77,14 +80,14 @@ New runs follow **ARCHITECTURE §5**: under the chosen results root, single runs
 1. Implement a builder `my_mode(*, L, n, sigma_0, **kwargs)` in `src/continuous_patterns/core/stress.py` returning `(sigma_xx, sigma_yy, sigma_xy)`.
 2. Register it in `STRESS_BUILDERS`.
 3. Add the mode string to `StressSpec.mode` in `src/continuous_patterns/core/io.py` (`Literal[...]`).
-4. Copy an existing YAML under `src/continuous_patterns/experiments/templates/` and set `stress.mode`.
+4. Copy an existing YAML under `experiments/canonical/` and set `stress.mode`.
 
 ### Add a new geometry
 
 1. Implement a mask builder in `src/continuous_patterns/core/masks.py` returning the standard dict (`chi`, `ring`, `ring_accounting`, `rv`, plus `dx`, `L`, `R`, `n`, `xc`, `yc`).
 2. Register it in `MASK_BUILDERS`.
 3. Extend `GeometrySpec.type` in `core/io.py`.
-4. Add a template YAML under `experiments/templates/`.
+4. Add a YAML card under `experiments/canonical/` (or `experiments/exploratory/` for one-offs).
 
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for coding standards, testing, and known permissive areas (`physics` / `initial` dicts).
 

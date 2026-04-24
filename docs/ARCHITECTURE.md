@@ -26,7 +26,10 @@ src/continuous_patterns/
     diagnostics_stage1.py    # cavity / rim / Option B / Jabłczyński / … (NumPy)
     diagnostics_stage2.py    # bulk: S(k,t), domain stats, coarsening, … (NumPy)
     plotting.py              # fields → PNG; NumPy in, no io/models/experiments imports
-    io.py                    # nested YAML only → validate → paths + summary writers
+    io.py                    # layered YAML merge → validate → paths + summary writers
+
+  defaults/
+    solver_defaults.yaml     # bundled solver-global defaults (package data)
 
   models/
     agate_ch.py              # Stage I: build Geometry + SimParams; integrate
@@ -35,7 +38,18 @@ src/continuous_patterns/
   experiments/
     run.py                   # canonical CLI: YAML → model → results tree
     sweep.py                 # sweep YAML → combinations → run API
-    templates/               # nested canonical YAML only
+
+experiments/                 # repo-root: user-space experiment cards (not in wheel)
+  canonical/                 # paper-quality nested YAML
+  sweeps/                    # sweep definitions
+  exploratory/               # ad-hoc runs (often gitkeep only)
+  solver_settings.yaml       # optional per-machine overrides (gitignored)
+  solver_settings.example.yaml
+
+scripts/
+  reproduce_canonical.py
+  compare_with_archive.py
+  inspect_flux_samples.py
 
 tests/
   unit/
@@ -47,9 +61,7 @@ docs/
   ARCHITECTURE.md
   CONTRIBUTING.md            # may lag until Phase 5
 
-examples/
-  reproduce_canonical.py
-
+Makefile
 README.md
 pyproject.toml
 ```
@@ -131,7 +143,7 @@ class SimResult:
 
 The **only** format accepted by **`core.io`** for new code is **nested** YAML matching §2.6 schema (same structure as former §2.5: `experiment`, `geometry`, `physics`, `stress`, `time`, `output`). **Flat** legacy configs are **not** parsed by production `io.py`.
 
-**One-time migration (Phase 4):** archival flat YAMLs are converted to nested templates using a **throwaway script** (e.g. `scripts/flatten_to_nested_once.py` or a notebook) — **not** part of the stable `core` API. After conversion, templates live under **`experiments/templates/`**.
+**One-time migration (Phase 4):** archival flat YAMLs are converted to nested run cards using a **throwaway script** (e.g. `scripts/flatten_to_nested_once.py` or a notebook) — **not** part of the stable `core` API. After conversion, canonical YAML lives under **`experiments/canonical/`** (see **§10**).
 
 **Validation:** **`pydantic` v2** in `core/io.py` — `RunConfigValidated` composes `ExperimentSpec`, `GeometrySpec`, `StressSpec`, `TimeSpec`, `OutputSpec` with **`Literal`** dispatch fields for `experiment.model`, `geometry.type`, and `stress.mode`; top-level keys outside the schema are rejected (`extra="forbid"`). **`physics`** and **`initial`** remain plain dicts (§2.8 / CONTRIBUTING).
 
@@ -292,7 +304,7 @@ def jab_metrics_canonical_slice(phi_m: np.ndarray, phi_c: np.ndarray, L: float, 
 
 **Responsibility:**
 
-- **`load_run_config(path: Path) -> dict[str, Any]`** — **nested YAML only**; validate; reject flat files at the door with a clear error pointing to the migration script.
+- **`load_run_config(experiment_path, *, user_settings_path=None) -> dict[str, Any]`** — merge **library defaults** → optional **user settings** → **experiment YAML** (§10); **nested YAML only**; validate; reject flat files at the door with a clear error pointing to **`experiments/canonical/`** layout.
 - **Internal:** build `Geometry`, `SimParams` (including `reaction_active` / `dirichlet_active` from `experiment.model` + `physics` blocks) — implementation may use a private normalized dict, but **on-disk** `config.yaml` is the **nested** canonical copy.
 - **`allocate_run_dir`**, **`save_summary`**, **`save_final_state_npz`**, optional H5 snapshot writer.
 
@@ -306,7 +318,7 @@ class ResultPaths:
     config_yaml: Path
     final_state_npz: Path
 
-def load_run_config(path: Path) -> dict[str, Any]: ...
+def load_run_config(experiment_path: Path | str, *, user_settings_path: Path | str | None = None) -> dict[str, Any]: ...
 def allocate_run_dir(*, experiment_name: str, results_root: Path) -> ResultPaths: ...
 def save_summary(path: Path, payload: dict[str, Any]) -> None: ...
 ```
@@ -378,7 +390,7 @@ results/
 
 ### 6.1 `experiments.run` (**canonical**)
 
-**CLI:** `python -m continuous_patterns.experiments.run --config path/to/nested.yaml [--out-dir ...] [--chunk-size N] [--no-write] [--log-level INFO|DEBUG|...] [--no-progress]`.
+**CLI:** `python -m continuous_patterns.experiments.run --config path/to/nested.yaml [--out-dir ...] [--chunk-size N] [--no-write] [--log-level INFO|DEBUG|...] [--no-progress] [--user-settings path.yaml]`.
 
 **Flow:** `core.io.load_run_config` → validate → **`allocate_run_dir`** (when writing) → attach **`logging`** handlers (stdout + **`run.log`**) → dispatch **`models.*.simulate(..., show_progress=...)`** → stage-specific diagnostics → write `config.yaml` / `summary.json` / NPZ / PNG → detach file handler in **`finally`**.
 
@@ -402,9 +414,9 @@ Merges sweep YAML into nested per-run dicts; calls **`experiments.run.run_one`**
 
 ---
 
-## 8. `examples/reproduce_canonical.py`
+## 8. `scripts/reproduce_canonical.py`
 
-Calls **`experiments.run.run_one`** on eight nested template paths (Phase 4 canonical set). Environment: **`CP_REPRODUCE_MINI`**, **`CP_LOG_LEVEL`**, **`CP_NO_PROGRESS`** (see README Quick start).
+Calls **`experiments.run.run_one`** on eight nested YAML paths under **`experiments/canonical/`** (Phase 4 canonical set). Environment: **`CP_REPRODUCE_MINI`**, **`CP_LOG_LEVEL`**, **`CP_NO_PROGRESS`** (see README Quick start).
 
 ---
 
@@ -421,29 +433,62 @@ Calls **`experiments.run.run_one`** on eight nested template paths (Phase 4 cano
 
 ---
 
-## 10. Migration (clean slate — no shim)
+## 10. Configuration and experiments layout
+
+Experiment definitions are kept **outside** the installable library so the wheel stays generic.
+
+### Directory layout
+
+- **`src/continuous_patterns/defaults/solver_defaults.yaml`** — library defaults for solver-global options (`time.dt`, `time.snapshot_every`, output toggles). Bundled as package data (`setuptools` `package-data`).
+- **`experiments/canonical/`** — paper-quality experiment configs (tracked in git).
+- **`experiments/sweeps/`** — sweep definitions for parameter scans.
+- **`experiments/exploratory/`** — ad-hoc runs (often only `.gitkeep`).
+- **`experiments/solver_settings.yaml`** — per-machine overrides (gitignored; copy from **`experiments/solver_settings.example.yaml`**).
+
+### Config merge order
+
+**`core.io.load_run_config(experiment_path, *, user_settings_path=None)`** merges three layers; **later wins**:
+
+1. Library defaults (`solver_defaults.yaml`, bundled).
+2. User overrides (`experiments/solver_settings.yaml` if present, or `user_settings_path` when set).
+3. Experiment YAML (the `--config` / sweep `base_config` file).
+
+**Deep merge:** scalars replace; dicts recurse; lists replace wholesale.
+
+**Spectral mass drift (Option D):** ``output.record_spectral_mass_diagnostic`` is forced
+``True`` in :func:`continuous_patterns.core.io.load_run_config` and in
+:func:`continuous_patterns.experiments.run.run_one` so every CLI / merged run records
+``spectral_mass_drift`` when the Stage I driver runs the diagnostic.
+
+### Example
+
+A canonical YAML (e.g. **`experiments/canonical/medium_pinning.yaml`**) may omit keys that library defaults already set correctly. Typical Stage I cards still declare **`experiment`**, **`geometry`**, **`physics`**, **`stress`**, **`time.T`**, and **`initial`** as needed.
+
+---
+
+## 11. Migration (clean slate — no shim)
 
 1. **Delete** old packages **`agate_ch/`**, **`agate_stage2/`**, and their **`python -m …run`** entry points as part of **Phase 2 cleanup** (see **`CLEANUP_PLAN.md`**). **No** compatibility shim.
-2. **Configs:** convert archived flat YAML → **`experiments/templates/*.yaml`** nested form **once** (throwaway converter); **`core.io`** accepts **nested only**.
+2. **Configs:** convert archived flat YAML → **`experiments/canonical/*.yaml`** nested form **once** (throwaway converter); **`core.io`** accepts **nested only**.
 3. **Results:** do **not** move or delete historical directories; **new** runs write only the **§5** layout under `results/`.
 4. **README** documents **`experiments.run`** as the sole simulation CLI.
 
 ---
 
-## 11. Resolved implementation choices (formerly open)
+## 12. Resolved implementation choices (formerly open)
 
-### §11.1 — YAML validation: **Pydantic v2**
+### §12.1 — YAML validation: **Pydantic v2**
 
 Nested run configs are validated with **`pydantic` v2** (typed models, discriminated unions / `Literal` for `stress.mode` and `geometry.type`, clear validation errors). This is **required** for `core.io` **only** at the load/save boundary; see **§2.8** for why `Geometry` / `SimParams` / `SimState` remain dataclasses. Hand-rolled ad hoc dict checks are avoided for **I/O** load paths.
 
-### §11.2 — Snapshot format: **HDF5 only**
+### §12.2 — Snapshot format: **HDF5 only**
 
 Trajectory storage remains **`snapshots.h5`** (existing chunk/group convention or a documented successor within HDF5). **No** introduction of per-step NPZ shards in this refactor; changing snapshot format is **out of scope**.
 
-### §11.3 — CI scope: **CPU-only smoke**
+### §12.3 — CI scope: **CPU-only smoke**
 
 Integration tests run on **CPU** with **`jax_enable_x64=False`** to match the default production integrator policy. **GPU** regression and long-$T$ figure regeneration are **manual / user-managed**, not CI-managed.
 
 ---
 
-*Document version: Phase 1 + §11 closure — aligned with `CLEANUP_PLAN.md` Phase 2.*
+*Document version: Phase 1 + §12 closure — aligned with `CLEANUP_PLAN.md` Phase 2.*
