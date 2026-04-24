@@ -49,8 +49,10 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
     n = int(_require(gcfg, "n", where="config.geometry"))
     eps_scale = float(gcfg.get("eps_scale", 2.0))
 
+    dtype = jnp.float64 if cfg.get("precision") == "float64" else jnp.float32
+
     builder = MASK_BUILDERS[gtype]
-    m = builder(L=L, R=R, n=n, eps_scale=eps_scale)
+    m = builder(L=L, R=R, n=n, eps_scale=eps_scale, dtype=dtype)
 
     k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
 
@@ -58,16 +60,18 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
     smode = _require(st, "mode", where="config.stress")
     if smode not in STRESS_BUILDERS:
         raise ValueError(f"Unknown stress.mode {smode!r}; allowed: {sorted(STRESS_BUILDERS)}")
-    skwargs: dict[str, Any] = {"L": L, "n": n}
+    skwargs: dict[str, Any] = {"L": L, "n": n, "dtype": dtype}
     if smode in ("flamant_two_point", "kirsch"):
         skwargs["R"] = R
+    # ``stress_eps_factor``: validated on the stress block; only Flamant builder uses it.
+    _skip = frozenset({"mode", "stress_coupling_B", "stress_eps_factor", "dtype"})
     for k, v in st.items():
-        if k in ("mode", "stress_coupling_B"):
+        if k in _skip:
             continue
         skwargs.setdefault(k, v)
+    if smode == "flamant_two_point":
+        skwargs["stress_eps_factor"] = float(st.get("stress_eps_factor", 3.0))
     sxx, syy, sxy = STRESS_BUILDERS[smode](**skwargs)
-
-    dtype = jnp.float64 if cfg.get("precision") == "float64" else jnp.float32
 
     def _to(x: Any) -> Array:
         return jnp.asarray(x, dtype=dtype)

@@ -79,11 +79,15 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
     smode = _require(st, "mode", where="config.stress")
     if smode not in STRESS_BUILDERS:
         raise ValueError(f"Unknown stress.mode {smode!r}; allowed: {sorted(STRESS_BUILDERS)}")
-    skwargs: dict[str, Any] = {"L": L, "n": n}
+    skwargs: dict[str, Any] = {"L": L, "n": n, "dtype": dtype}
+    # ``stress_eps_factor`` only used by ``flamant_two_point`` (see agate_ch ``build_geometry``).
+    _skip = frozenset({"mode", "stress_coupling_B", "stress_eps_factor", "dtype"})
     for k, v in st.items():
-        if k in ("mode", "stress_coupling_B"):
+        if k in _skip:
             continue
         skwargs.setdefault(k, v)
+    if smode == "flamant_two_point":
+        skwargs["stress_eps_factor"] = float(st.get("stress_eps_factor", 3.0))
     sxx, syy, sxy = STRESS_BUILDERS[smode](**skwargs)
 
     def _to(x: Any) -> Array:
