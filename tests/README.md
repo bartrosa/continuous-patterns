@@ -1,12 +1,11 @@
 # Tests
 
-All pytest modules live under **`tests/`** (see **`pyproject.toml`** → `[tool.pytest.ini_options]` → `testpaths`).
+Pytest discovers everything under **`tests/`** (see **`pyproject.toml`** → `[tool.pytest.ini_options]` → `testpaths`).
 
-| Path | Role |
-|------|------|
-| **`test_agate_ch_solver_regression.py`** | Flat config / `cfg_to_sim_params` / YAML flatten checks for `agate_ch` |
-| **`test_agate_stage2_smoke.py`** | Smoke imports and params for `agate_stage2` |
-| **`agate_ch/test_smoke.py`** | Optional heavier `agate_ch` smoke (nested folder mirrors package name) |
-| **`agate_ch/test_c0_alpha_gravity.py`** | Experiment 4 rim gradient `c0_alpha`: defaults, rim field, α=0 IMEX bitwise match, legacy ``uniform_supersaturation`` path |
+## Layout
 
-Add new files here—**not** under `src/`—so CI and `uv run pytest` discover them without extra wiring.
+- **`unit/`** — Fast, isolated checks of `continuous_patterns.core` primitives (spectral symbols, masks, stress builders, IMEX branches, I/O validation) with no full simulation harness.
+- **`integration/`** — End-to-end smoke runs: nested YAML → model → a few steps (or tiny grids), asserting invariants and that Stage I / II entry points wire up.
+- **`regression/`** — Golden or drift-tolerant comparisons against archived references (HDF5 snapshots, key scalars); intended for longer runs or x64-on-demand paths from **`docs/ARCHITECTURE.md`**.
+
+Add new modules under the tier that matches the failure mode you care about; keep helpers next to the tests that use them, not under `src/`.

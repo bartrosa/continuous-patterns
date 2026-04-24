@@ -184,6 +184,9 @@ cython_debug/
 # Visual Studio Code / Cursor (workspace settings stay local)
 .vscode/
 
+# User-level solver overrides (per-machine)
+experiments/solver_settings.yaml
+
 # Simulation outputs (HDF5 / mp4 / PNG dumps); keep tracked placeholders only
 results/*
 !results/example/
@@ -193,6 +196,8 @@ results/agate_ch/
 results/agate_stage2/
 !results/agate_stage2/README.md
 papers/*
+archive/*
+flux_inspect/*
 
 # Ruff stuff:
 .ruff_cache/
