@@ -7,6 +7,7 @@ and §5. No flat legacy config ingestion.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,7 +26,9 @@ _MIGRATION_HINT = (
 
 
 class ExperimentSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """Permissive: ``seed`` and future keys allowed until Phase 3l tightening."""
+
+    model_config = ConfigDict(extra="allow")
 
     name: str = "run"
     model: str
@@ -101,9 +104,39 @@ def allocate_run_dir(*, experiment_name: str, results_root: Path) -> ResultPaths
     )
 
 
+def _json_numpy_default(obj: Any) -> Any:
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """Replace NaN/Inf with ``None``; recurse dicts/lists (JSON-safe ``summary.json``)."""
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list | tuple):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, float | np.floating):
+        v = float(obj)
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return v
+    if isinstance(obj, np.generic):
+        return _sanitize_for_json(obj.item())
+    return obj
+
+
+def dumps_json(payload: Any) -> str:
+    """Serialize ``payload`` to a JSON string (NumPy-aware; NaN/Inf → null)."""
+    clean = _sanitize_for_json(payload)
+    return json.dumps(clean, indent=2, allow_nan=False, default=_json_numpy_default)
+
+
 def save_summary(path: Path, payload: dict[str, Any]) -> None:
-    """Write ``summary.json`` (UTF-8, indented)."""
-    Path(path).write_text(json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8")
+    """Write ``summary.json`` (UTF-8, indented). Supports NumPy; NaN/Inf → null."""
+    Path(path).write_text(dumps_json(payload), encoding="utf-8")
 
 
 def save_final_state_npz(
