@@ -25,6 +25,7 @@ from continuous_patterns.core.io import (
     load_run_config,
     save_final_state_npz,
     save_run_config,
+    save_snapshots_h5,
     save_summary,
     write_figures_final,
 )
@@ -149,6 +150,26 @@ def run_one(
                 include_params_panel=include_panel,
             )
             out = cfg.get("output", {})
+            if bool(out.get("save_snapshots_h5", False)):
+                h5_snaps = result.meta.get("h5_snapshots")
+                if isinstance(h5_snaps, list) and h5_snaps:
+                    save_snapshots_h5(
+                        paths.snapshots_h5,
+                        h5_snaps,
+                        dt=float(cfg["time"]["dt"]),
+                        cfg_summary={
+                            "experiment": cfg.get("experiment", {}),
+                            "geometry": cfg.get("geometry", {}),
+                            "physics": cfg.get("physics", {}),
+                            "time": cfg.get("time", {}),
+                        },
+                    )
+                    logger.info(
+                        "Wrote %d snapshots to %s",
+                        len(h5_snaps),
+                        paths.snapshots_h5,
+                    )
+                    h5_snaps.clear()
             if bool(out.get("record_evolution_gif", False)):
                 gif_snaps = result.meta.get("gif_snapshots")
                 if isinstance(gif_snaps, list) and gif_snaps:

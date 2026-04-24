@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import math
 import time
 from typing import Any
 
@@ -40,6 +39,7 @@ from continuous_patterns.core.spectral import k_vectors
 from continuous_patterns.core.stress import STRESS_BUILDERS
 from continuous_patterns.core.types import SimResult, SimState
 from continuous_patterns.models._integrate import make_chunk_runner
+from continuous_patterns.models.agate_ch import _append_host_fields_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +302,12 @@ def simulate(
     cumulative_injection = 0.0
 
     outcfg = cfg.get("output", {})
+    save_h5 = bool(outcfg.get("save_snapshots_h5", False))
+    record_gif = bool(outcfg.get("record_evolution_gif", False))
+    need_snapshots = save_h5 or record_gif
+
+    h5_snapshots: list[dict[str, Any]] = []
+    gif_snapshots: list[tuple[float, np.ndarray]] = []
 
     meta: dict[str, Any] = {
         "chunk_size": chunk_size,
@@ -310,29 +316,50 @@ def simulate(
         "stage": "agate_stage2",
         "M_total_initial": m_total_initial,
     }
+    if save_h5:
+        meta["h5_snapshots"] = h5_snapshots
+    if record_gif:
+        meta["gif_snapshots"] = gif_snapshots
 
     snap_every = int(tcfg.get("snapshot_every", 10**9))
     if snap_every < 1:
         snap_every = 1
 
-    record_gif = bool(outcfg.get("record_evolution_gif", False))
-    max_gif_frames = int(outcfg.get("gif_max_frames", 120))
-    gif_every_steps = snap_every
-    next_gif_step: int | None = None
-    if record_gif:
-        meta["gif_snapshots"] = []
-        n_est_snaps = max(1, n_total // snap_every)
-        if n_est_snaps > max_gif_frames:
-            gif_every_steps = max(snap_every, int(math.ceil(n_total / max_gif_frames)))
-        next_gif_step = gif_every_steps
-        meta["gif_snapshots"].append(
-            (0.0, np.asarray(jax.device_get(state[0]), dtype=np.float64).copy())
+    eff_chunk = min(chunk_size, snap_every) if need_snapshots else chunk_size
+    if need_snapshots and eff_chunk < chunk_size:
+        n_expect = n_total // snap_every + 1 + (1 if n_total % snap_every != 0 else 0)
+        logger.info(
+            "Snapshots enabled: sub-chunk size reduced from %d to %d (snapshot_every=%d). "
+            "Roughly %d snapshot times over %d total steps.",
+            chunk_size,
+            eff_chunk,
+            snap_every,
+            n_expect,
+            n_total,
         )
 
     run_chunk = make_chunk_runner(geom, prm, dt)
 
     current_step = 0
     next_snap_step = snap_every
+
+    if need_snapshots:
+        _append_snapshot_bulk(
+            meta["snapshots"],
+            state,
+            step=0,
+            t=0.0,
+            L=float(geom.L),
+        )
+        _append_host_fields_snapshot(
+            state,
+            step=0,
+            t=0.0,
+            save_h5=save_h5,
+            record_gif=record_gif,
+            h5_list=h5_snapshots if save_h5 else None,
+            gif_list=gif_snapshots if record_gif else None,
+        )
 
     wall_t0 = time.perf_counter()
     pbar = tqdm(
@@ -345,11 +372,11 @@ def simulate(
     try:
         while current_step < n_total:
             target = n_total
-            if next_snap_step <= n_total:
+            if not need_snapshots and next_snap_step <= n_total:
                 target = min(target, next_snap_step)
-            n_run = min(chunk_size, target - current_step)
+            n_run = min(eff_chunk, target - current_step)
             if n_run <= 0:
-                n_run = min(chunk_size, n_total - current_step)
+                n_run = min(eff_chunk, n_total - current_step)
             state, chunk_inj = run_chunk(state, n_run)
             cumulative_injection += float(np.asarray(jax.device_get(chunk_inj)))
             current_step += n_run
@@ -363,26 +390,44 @@ def simulate(
                 current_step * dt,
             )
 
-            while next_snap_step <= current_step and next_snap_step <= n_total:
-                _append_snapshot_bulk(
-                    meta["snapshots"],
-                    state,
-                    step=int(next_snap_step),
-                    t=float(next_snap_step * dt),
-                    L=float(geom.L),
-                )
-                logger.info(
-                    "Snapshot at t=%.1f (step %d)",
-                    float(next_snap_step * dt),
-                    int(next_snap_step),
-                )
-                next_snap_step += snap_every
-
-            if record_gif and next_gif_step is not None:
-                while next_gif_step <= current_step and next_gif_step <= n_total:
-                    pm_g = np.asarray(jax.device_get(state[0]), dtype=np.float64)
-                    meta["gif_snapshots"].append((float(next_gif_step * dt), pm_g.copy()))
-                    next_gif_step += gif_every_steps
+            if need_snapshots and current_step > 0:
+                if current_step % snap_every == 0 or current_step == n_total:
+                    _append_snapshot_bulk(
+                        meta["snapshots"],
+                        state,
+                        step=int(current_step),
+                        t=float(current_step * dt),
+                        L=float(geom.L),
+                    )
+                    _append_host_fields_snapshot(
+                        state,
+                        step=current_step,
+                        t=float(current_step * dt),
+                        save_h5=save_h5,
+                        record_gif=record_gif,
+                        h5_list=h5_snapshots if save_h5 else None,
+                        gif_list=gif_snapshots if record_gif else None,
+                    )
+                    logger.info(
+                        "Snapshot at t=%.1f (step %d)",
+                        float(current_step * dt),
+                        int(current_step),
+                    )
+            else:
+                while next_snap_step <= current_step and next_snap_step <= n_total:
+                    _append_snapshot_bulk(
+                        meta["snapshots"],
+                        state,
+                        step=int(next_snap_step),
+                        t=float(next_snap_step * dt),
+                        L=float(geom.L),
+                    )
+                    logger.info(
+                        "Snapshot at t=%.1f (step %d)",
+                        float(next_snap_step * dt),
+                        int(next_snap_step),
+                    )
+                    next_snap_step += snap_every
     finally:
         pbar.close()
 
@@ -401,12 +446,6 @@ def simulate(
     )
     meta["M_total_final"] = m_total_final
     meta["cumulative_dirichlet_injection"] = cumulative_injection
-
-    if record_gif and meta.get("gif_snapshots"):
-        snaps: list[tuple[float, np.ndarray]] = meta["gif_snapshots"]
-        last_t = float(snaps[-1][0])
-        if abs(last_t - t_final) > 1e-6 * max(abs(t_final), 1.0):
-            snaps.append((t_final, pm_f.copy()))
 
     state_final = SimState(phi_m=state[0], phi_c=state[1], c=state[2], t=t_final)
     diagnostics = _assemble_diagnostics_s2(state, geom, prm, meta)

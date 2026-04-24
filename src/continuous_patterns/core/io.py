@@ -90,6 +90,7 @@ class OutputSpec(BaseModel):
     flux_sample_dt: float | None = None
     record_spectral_mass_diagnostic: bool = False
     record_evolution_gif: bool = False
+    save_snapshots_h5: bool = False
     gif_max_frames: int = Field(default=120, ge=8, le=500)
     gif_fps: int = Field(default=10, ge=1, le=60)
     include_params_panel: bool = True
@@ -119,6 +120,7 @@ class ResultPaths:
     config_yaml: Path
     final_state_npz: Path
     log_file: Path
+    snapshots_h5: Path
 
 
 _SOLVER_SETTINGS_DEFAULT = Path("experiments/solver_settings.yaml")
@@ -246,7 +248,70 @@ def allocate_run_dir(*, experiment_name: str, results_root: Path) -> ResultPaths
         config_yaml=root / "config.yaml",
         final_state_npz=root / "final_state.npz",
         log_file=root / "run.log",
+        snapshots_h5=root / "snapshots.h5",
     )
+
+
+def save_snapshots_h5(
+    path: Path | str,
+    snapshots: list[dict[str, Any]],
+    *,
+    dt: float,
+    cfg_summary: dict[str, Any] | None = None,
+) -> None:
+    """Write snapshot list to HDF5 (gzip fields; metadata in ``/meta``)."""
+    import h5py
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(p, "w") as h5:
+        meta = h5.create_group("meta")
+        meta.attrs["dt"] = float(dt)
+        meta.attrs["n_snapshots"] = int(len(snapshots))
+        if snapshots:
+            shp = list(np.asarray(snapshots[0]["phi_m"]).shape)
+            meta.attrs["field_shape"] = shp
+        if cfg_summary is not None:
+            meta.attrs["config_json"] = json.dumps(cfg_summary, default=str)
+        for idx, snap in enumerate(snapshots):
+            g = h5.create_group(f"snap_{idx:05d}")
+            g.attrs["step"] = int(snap["step"])
+            g.attrs["t"] = float(snap["t"])
+            for field in ("phi_m", "phi_c", "c"):
+                arr = np.asarray(snap[field], dtype=np.float32)
+                g.create_dataset(
+                    field,
+                    data=arr,
+                    chunks=True,
+                    compression="gzip",
+                    compression_opts=4,
+                )
+
+
+def load_snapshots_h5(path: Path | str) -> list[dict[str, Any]]:
+    """Load ``snapshots.h5`` written by :func:`save_snapshots_h5`."""
+    import h5py
+
+    p = Path(path)
+    if not p.is_file():
+        return []
+    out: list[dict[str, Any]] = []
+    with h5py.File(p, "r") as h5:
+        if "meta" not in h5:
+            return []
+        n = int(h5["meta"].attrs.get("n_snapshots", 0))
+        for idx in range(n):
+            g = h5[f"snap_{idx:05d}"]
+            out.append(
+                {
+                    "step": int(g.attrs["step"]),
+                    "t": float(g.attrs["t"]),
+                    "phi_m": np.asarray(g["phi_m"]),
+                    "phi_c": np.asarray(g["phi_c"]),
+                    "c": np.asarray(g["c"]),
+                }
+            )
+    return out
 
 
 def _json_numpy_default(obj: Any) -> Any:
