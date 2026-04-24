@@ -133,7 +133,7 @@ The **only** format accepted by **`core.io`** for new code is **nested** YAML ma
 
 **One-time migration (Phase 4):** archival flat YAMLs are converted to nested templates using a **throwaway script** (e.g. `scripts/flatten_to_nested_once.py` or a notebook) — **not** part of the stable `core` API. After conversion, templates live under **`experiments/templates/`**.
 
-**Validation:** **`pydantic` v2** models in `core.io` (or a dedicated `core/config_schema.py`) — nested YAML loads into typed settings; use **`Literal`** / unions for `stress.mode` and `geometry.type` dispatch. Fail fast on unknown keys / missing required sections per `experiment.model`.
+**Validation:** **`pydantic` v2** in `core/io.py` — `RunConfigValidated` composes `ExperimentSpec`, `GeometrySpec`, `StressSpec`, `TimeSpec`, `OutputSpec` with **`Literal`** dispatch fields for `experiment.model`, `geometry.type`, and `stress.mode`; top-level keys outside the schema are rejected (`extra="forbid"`). **`physics`** and **`initial`** remain plain dicts (§2.8 / CONTRIBUTING).
 
 ```yaml
 experiment:
