@@ -25,6 +25,12 @@ from continuous_patterns.plot_captions import (
 
 _ANTIPHASE_CMAP = "RdBu_r"
 
+# ``save_final_pub`` used to set ``Figure.dpi`` to ``min_px / zh_height``, which can be ~1
+# when the upsampled crop is ``min_px`` tall. That yields figsizes of thousands of inches and
+# triggers FreeType ``invalid ppem`` on caption text. Rasterize at a normal DPI instead.
+# Higher DPI + larger ``min_px`` default ⇒ sharper, more readable publication PNGs.
+_FINAL_PUB_DPI = 220.0
+
 
 def _antiphase_cmap():
     try:
@@ -81,13 +87,18 @@ def save_final_pub(
     L: float,
     R: float,
     path: Path,
-    min_px: int = 1600,
+    min_px: int = 2400,
     cmap: str = "cividis",
     vmin: float | None = None,
     vmax: float | None = None,
     cfg: dict[str, Any] | None = None,
 ) -> None:
-    """Single-panel field image: cropped cavity + margin, colormap, no decorations."""
+    """Single-panel field image: cropped cavity + margin, colormap, no decorations.
+
+    Rasterization uses a fixed :data:`_FINAL_PUB_DPI` so figure sizes stay in sane
+    inch units (the legacy ``dpi = min_px / zh_height`` could be ``~1``, blowing up
+    figsize and breaking Matplotlib font rendering when a parameter caption is added).
+    """
     from matplotlib.gridspec import GridSpec
 
     n = field.shape[0]
@@ -104,12 +115,22 @@ def save_final_pub(
     h0, w0 = z.shape
     scale = min_px / max(h0, w0, 1)
     zh = zoom(z, scale, order=1)
-    dpi = min_px / max(zh.shape[0], 1)
+    ph, pw = int(zh.shape[0]), int(zh.shape[1])
+    dpi_r = _FINAL_PUB_DPI
+    w_in = pw / dpi_r
+    h_img_in = ph / dpi_r
     if cfg:
-        fig_h_in = zh.shape[0] / dpi + 0.55
-        fig_w_in = zh.shape[1] / dpi
-        fig = plt.figure(figsize=(fig_w_in, fig_h_in), dpi=dpi)
-        gs = GridSpec(2, 1, figure=fig, height_ratios=[1.0, 0.38], hspace=0.15)
+        # Row 0 shows ``zh`` at native pixel count when saved at ``dpi_r``; row 1 is caption.
+        ratio_top, ratio_bot = 1.0, 0.55
+        fig_h_in = h_img_in * (ratio_top + ratio_bot) / ratio_top
+        fig = plt.figure(figsize=(w_in, fig_h_in), dpi=dpi_r)
+        gs = GridSpec(
+            2,
+            1,
+            figure=fig,
+            height_ratios=[ratio_top, ratio_bot],
+            hspace=0.12,
+        )
         ax = fig.add_subplot(gs[0])
         ax.imshow(
             zh.T,
@@ -131,14 +152,14 @@ def save_final_pub(
             transform=ax2.transAxes,
             ha="center",
             va="top",
-            fontsize=3.8,
+            fontsize=9.0,
             family="monospace",
         )
-        fig.savefig(path, dpi=dpi, bbox_inches="tight", pad_inches=0.06)
+        fig.savefig(path, dpi=dpi_r, bbox_inches="tight", pad_inches=0.1)
         plt.close(fig)
         return
 
-    fig = plt.figure(figsize=(zh.shape[1] / dpi, zh.shape[0] / dpi), dpi=dpi)
+    fig = plt.figure(figsize=(w_in, h_img_in), dpi=dpi_r)
     ax = fig.add_axes((0.0, 0.0, 1.0, 1.0))
     ax.imshow(
         zh.T,
@@ -150,7 +171,7 @@ def save_final_pub(
         aspect="equal",
     )
     ax.axis("off")
-    fig.savefig(path, dpi=dpi, pad_inches=0, bbox_inches=None)
+    fig.savefig(path, dpi=dpi_r, pad_inches=0, bbox_inches=None)
     plt.close(fig)
 
 

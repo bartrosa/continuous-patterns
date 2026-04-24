@@ -1,4 +1,31 @@
-"""Pseudo-spectral IMEX Model C step + chunked scan for long runs."""
+"""Pseudo-spectral IMEX Model C step + chunked scan for long runs.
+
+Dirichlet silica on the cavity rim defaults to scalar ``c_0``. Optional
+``physics.c0_alpha`` (flat ``c0_alpha`` after YAML flattening) defines a vertical
+linear ramp ``c_0(y)`` on the **enforcement ring only** — see
+:func:`rim_dirichlet_c_targets`.
+
+**Anisotropic gradient energy (Experiment 5a):** optional ``physics.kappa_x``,
+``physics.kappa_y`` (flat ``kappa_x``, ``kappa_y``) generalize the Cahn--Hilliard
+stiffness; if omitted, both default to ``physics.kappa``. Isotropic behaviour and
+bitwise numerics match the legacy scheme when ``kappa_x == kappa_y == kappa``.
+
+**Stress-coupled gradient (Experiment 6):** optional ``stress_mode``,
+``sigma_0``, ``stress_coupling_B`` add ``−∇·(σ∇ψ)`` to the chemical potentials with
+``ψ = φ_m − φ_c``: ``μ_m += ½ μ_stress``, ``μ_c −= ½ μ_stress`` where
+``μ_stress = −B ∇·(σ∇ψ)`` (see :func:`stress_contribution_to_mu`). The RHS uses
+``M ∇² μ``, hence stress enters as the Laplacian of a flux-divergence form — consistent
+with phase-field mass bookkeeping for ``ψ``.
+When ``stress_coupling_B == 0`` or σ is zero (``stress_mode: none``),
+the legacy IMEX path is unchanged.
+
+**Backward compatibility:** configs without ``c0_alpha`` behave like older
+checkouts (``c0_alpha`` defaults to ``0.0``). When ``uniform_supersaturation``
+is enabled and ``c0_alpha`` is zero, dissolved ``c`` is still ``c_0 * χ``
+everywhere in the cavity at the start/end of each IMEX step (legacy model).
+Enable ``physics.c0_alpha != 0`` only when using the gravity-rim variant
+(Experiment 4).
+"""
 
 from __future__ import annotations
 
@@ -83,12 +110,27 @@ def print_ring_mask_sanity(
     return stats
 
 
+def rim_dirichlet_c_targets(L: float, geom: Geometry, prm: SimParams) -> jnp.ndarray:
+    """Boundary silica target on the Dirichlet ring: ``c_0`` or ``c_0(y)`` gravity ramp.
+
+    ``c_local(y) = c_0 * (1 + c0_alpha * (y - L/2) / (L/2))`` — midline ``y=L/2`` unchanged,
+    top/bottom ±α. Interior values are untouched here; multiply by ``ring`` mask at call sites.
+    When ``c0_alpha == 0``, equals scalar ``c_0`` everywhere (fp32).
+    """
+    n = geom.chi.shape[0]
+    dx = jnp.asarray(geom.dx, dtype=jnp.float32)
+    y1d = (jnp.arange(n, dtype=jnp.float32) + jnp.float32(0.5)) * dx
+    half_l = jnp.float32(0.5 * L)
+    Y = jnp.broadcast_to(y1d[None, :], (n, n))
+    ramp = jnp.float32(prm.c0_alpha) * (Y - half_l) / jnp.maximum(half_l, jnp.float32(1e-12))
+    c0 = jnp.float32(prm.c_0)
+    return c0 * (jnp.float32(1.0) + ramp)
+
+
 class SimParams(NamedTuple):
     """Immutable numerical and flag bundle for one agate_ch simulation.
 
-    Built from flattened YAML via :func:`cfg_to_sim_params`. Fields include
-    Cahn–Hilliard and silica-transport parameters, Dirichlet/reaction toggles,
-    and geometry-related projection flags:
+    Built from flattened YAML via :func:`cfg_to_sim_params`.
 
     Attributes:
         apply_cavity_mask: If True, after each IMEX step multiply ``phi_*`` (and
@@ -98,11 +140,23 @@ class SimParams(NamedTuple):
             ``chi`` each step. If False, only phase fields are projected; use when
             ``disable_dirichlet`` is True to avoid spurious leakage of ``c`` from
             repeated ``chi<1`` attenuation at the rim.
+        c0_alpha: Rim Dirichlet gravity ramp strength (Experiment 4). Default ``0``
+            restores legacy behavior everywhere this parameter is irrelevant.
+            With ``uniform_supersaturation`` enabled and ``c0_alpha == 0``, dissolved
+            ``c`` stays exactly ``c_0 * χ`` over the cavity (historical semantics); for
+            ``c0_alpha != 0``, the ramp applies on the enforcement ring only while
+            non-ring cavity cells remain ``c_0 * χ``.
+        kappa_x, kappa_y: Diagonal gradient coefficients (Experiment 5a). When both
+            equal ``kappa``, the IMEX stiff symbol matches the legacy isotropic scheme.
+        stress_coupling_B: Strength ``B`` in ``F_stress`` (Experiment 6). Default ``0``
+            omits stress in μ.
     """
 
     W: float
     gamma: float
     kappa: float
+    kappa_x: float
+    kappa_y: float
     lambda_barrier: float
     D_c: float
     k_reaction: float
@@ -110,6 +164,7 @@ class SimParams(NamedTuple):
     M_c: float
     c_sat: float
     c_0: float
+    c0_alpha: float
     c_ostwald: float
     w_ostwald: float
     uniform_supersaturation: bool
@@ -122,6 +177,22 @@ class SimParams(NamedTuple):
     enable_reaction: float
     apply_cavity_mask: bool = True
     project_c_on_cavity: bool = True
+    stress_coupling_B: float = 0.0
+
+
+def build_geometry_from_cfg(cfg: dict[str, Any]) -> Geometry:
+    """Construct :class:`~continuous_patterns.agate_ch.model.Geometry` including stress fields."""
+    L = float(cfg["L"])
+    R = float(cfg["R"])
+    n = int(cfg["grid"])
+    return build_geometry(
+        L,
+        R,
+        n,
+        stress_mode=str(cfg.get("stress_mode", "none")),
+        sigma_0=float(cfg.get("sigma_0", 0.0)),
+        stress_eps_factor=float(cfg.get("stress_eps_factor", 3.0)),
+    )
 
 
 def _resolve_disable_dirichlet(cfg: dict[str, Any]) -> bool:
@@ -146,18 +217,26 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
     Args:
         cfg: Flat dict (from nested YAML via ``flatten_nested_cfg`` or legacy
             single-level configs). Must include required keys ``W``, ``gamma``,
-            ``kappa``, transport and thermodynamic parameters.
+            ``kappa`` (legacy scalar), optional ``kappa_x``/``kappa_y`` for
+            anisotropic gradient coefficients, transport and thermodynamic parameters.
 
     Returns:
-        A :class:`SimParams` instance with booleans/coercion applied.
+        A :class:`SimParams` instance with booleans/coercion applied. Missing
+        ``c0_alpha`` defaults to ``0.0`` (backward compatible with configs predating
+        Experiment 4).
     """
     W = float(cfg["W"])
     _er = cfg.get("enable_reaction", True)
     enable_rx = float(1.0 if _er else 0.0)
+    kappa = float(cfg["kappa"])
+    kappa_x = float(cfg.get("kappa_x", kappa))
+    kappa_y = float(cfg.get("kappa_y", kappa))
     return SimParams(
         W=W,
         gamma=float(cfg["gamma"]),
-        kappa=float(cfg["kappa"]),
+        kappa=kappa,
+        kappa_x=kappa_x,
+        kappa_y=kappa_y,
         lambda_barrier=float(cfg.get("lambda_barrier", 10.0)),
         D_c=float(cfg["D_c"]),
         k_reaction=float(cfg["k_reaction"]),
@@ -165,6 +244,7 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
         M_c=float(cfg["M_c"]),
         c_sat=float(cfg["c_sat"]),
         c_0=float(cfg["c_0"]),
+        c0_alpha=float(cfg.get("c0_alpha", 0.0)),
         c_ostwald=float(cfg["c_ostwald"]),
         w_ostwald=float(cfg["w_ostwald"]),
         uniform_supersaturation=bool(cfg.get("uniform_supersaturation", False)),
@@ -177,11 +257,54 @@ def cfg_to_sim_params(cfg: dict[str, Any]) -> SimParams:
         enable_reaction=enable_rx,
         apply_cavity_mask=bool(cfg.get("apply_cavity_mask", True)),
         project_c_on_cavity=bool(cfg.get("project_c_on_cavity", True)),
+        stress_coupling_B=float(cfg.get("stress_coupling_B", 0.0)),
     )
 
 
 def laplacian(u: jnp.ndarray, k_sq: jnp.ndarray) -> jnp.ndarray:
     return jnp.fft.ifft2(-k_sq * jnp.fft.fft2(u)).real
+
+
+def stress_mu_hat(phi: jnp.ndarray, geom: Geometry, B: jnp.ndarray) -> jnp.ndarray:
+    """Return ``FFT(μ_stress)`` with ``μ_stress = −B ∇·(σ∇φ)`` (periodic grid).
+
+    ``φ`` must be the scalar order parameter ``φ_m − φ_c``. For separate phase potentials,
+    use :func:`stress_contribution_to_mu`.
+    """
+    phi_hat = jnp.fft.fft2(phi)
+    kx = geom.kx_wave
+    ky = geom.ky_wave
+    dphi_dx = jnp.real(jnp.fft.ifft2(1j * kx * phi_hat))
+    dphi_dy = jnp.real(jnp.fft.ifft2(1j * ky * phi_hat))
+    fx = geom.sigma_xx * dphi_dx + geom.sigma_xy * dphi_dy
+    fy = geom.sigma_xy * dphi_dx + geom.sigma_yy * dphi_dy
+    fx_hat = jnp.fft.fft2(fx)
+    fy_hat = jnp.fft.fft2(fy)
+    div_hat = 1j * kx * fx_hat + 1j * ky * fy_hat
+    return -B * div_hat
+
+
+def stress_contribution_to_mu(
+    phi_m: jnp.ndarray,
+    phi_c: jnp.ndarray,
+    geom: Geometry,
+    B: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Physical-space stress pieces for ``μ_m``, ``μ_c`` from ``F_stress[ψ]``, ``ψ = φ_m − φ_c``.
+
+    With ``μ_stress = −B ∇·(σ∇ψ)`` (pseudospectral), variational splitting gives
+    ``δμ_m = +½ μ_stress``, ``δμ_c = −½ μ_stress`` so that
+    ``δμ_m − δμ_c = μ_stress = δF/δψ``. The CH flux ``M ∇² μ`` then applies the Laplacian
+    of these terms (divergence structure in the free energy).
+
+    Returns:
+        ``(delta_mu_m, delta_mu_c)`` in real space, same shape as ``phi_m``.
+    """
+    psi = phi_m - phi_c
+    mu_hat = stress_mu_hat(psi, geom, jnp.asarray(B, dtype=jnp.float32))
+    mu_stress = jnp.real(jnp.fft.ifft2(mu_hat))
+    half = jnp.float32(0.5)
+    return half * mu_stress, -half * mu_stress
 
 
 def imex_step(
@@ -193,11 +316,17 @@ def imex_step(
 ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
     c, phim, phic = state
     dx = jnp.asarray(geom.dx, dtype=jnp.float32)
+    L_step = float(geom.chi.shape[0]) * float(geom.dx)
+    rim_c = rim_dirichlet_c_targets(L_step, geom, prm)
     if not prm.disable_dirichlet:
         if prm.uniform_supersaturation:
-            c = prm.c_0 * geom.chi
+            # Legacy cavity-wide supersaturation: unchanged when gravity ramp is off.
+            if float(prm.c0_alpha) == 0.0:
+                c = prm.c_0 * geom.chi
+            else:
+                c = jnp.where(geom.ring > 0.5, rim_c, prm.c_0 * geom.chi)
         else:
-            c = jnp.where(geom.ring > 0.5, prm.c_0, c)
+            c = jnp.where(geom.ring > 0.5, rim_c, c)
 
     Gm = precipitation(c, phim, phic, k_reaction=prm.k_reaction, c_sat=prm.c_sat)
     Gm = Gm * jnp.asarray(prm.enable_reaction, dtype=Gm.dtype)
@@ -214,8 +343,28 @@ def imex_step(
 
     fm = dfdphi_total(phim, prm.W, prm.lambda_barrier)
     fc = dfdphi_total(phic, prm.W, prm.lambda_barrier)
-    lap_mu_m = laplacian(fm + prm.gamma * phic, geom.k_sq)
-    lap_mu_c = laplacian(fc + prm.gamma * phim, geom.k_sq)
+
+    def _lap_legacy(_: Any) -> tuple[jnp.ndarray, jnp.ndarray]:
+        lm = laplacian(fm + prm.gamma * phic, geom.k_sq)
+        lc = laplacian(fc + prm.gamma * phim, geom.k_sq)
+        return lm, lc
+
+    def _lap_stress(_: Any) -> tuple[jnp.ndarray, jnp.ndarray]:
+        b32 = jnp.float32(prm.stress_coupling_B)
+        dmu_m, dmu_c = stress_contribution_to_mu(phim, phic, geom, b32)
+        mu_m = fm + prm.gamma * phic + dmu_m
+        mu_c = fc + prm.gamma * phim + dmu_c
+        return laplacian(mu_m, geom.k_sq), laplacian(mu_c, geom.k_sq)
+
+    sig_any = jnp.maximum(
+        jnp.max(jnp.abs(geom.sigma_xx)),
+        jnp.maximum(jnp.max(jnp.abs(geom.sigma_yy)), jnp.max(jnp.abs(geom.sigma_xy))),
+    )
+    use_stress = jnp.logical_and(
+        jnp.asarray(prm.stress_coupling_B, dtype=jnp.float32) > jnp.float32(0),
+        sig_any > jnp.float32(1e-12),
+    )
+    lap_mu_m, lap_mu_c = lax.cond(use_stress, _lap_stress, _lap_legacy, None)
 
     rhs_m = prm.M_m * lap_mu_m + psi_m * Gm
     rhs_c = prm.M_c * lap_mu_c + psi_c * Gm
@@ -224,9 +373,14 @@ def imex_step(
     pm = jnp.fft.fft2(phim)
     pc = jnp.fft.fft2(phic)
 
+    # IMEX stiff symbol for diagonal anisotropic gradient energy:
+    # matches ``kappa * k_sq²`` when ``kappa_x == kappa_y == kappa``.
+    aniso_grad_sym = prm.kappa_x * geom.kx_sq + prm.kappa_y * geom.ky_sq
+    stiff_phi = geom.k_sq * aniso_grad_sym
+
     c_hat_new = (cm - dt * jnp.fft.fft2(Gm)) / (1.0 + dt * prm.D_c * geom.k_sq)
-    denom_m = 1.0 + dt * prm.M_m * prm.kappa * geom.k_four
-    denom_c = 1.0 + dt * prm.M_c * prm.kappa * geom.k_four
+    denom_m = 1.0 + dt * prm.M_m * stiff_phi
+    denom_c = 1.0 + dt * prm.M_c * stiff_phi
     phim_hat_new = (pm + dt * jnp.fft.fft2(rhs_m)) / denom_m
     phic_hat_new = (pc + dt * jnp.fft.fft2(rhs_c)) / denom_c
 
@@ -251,13 +405,17 @@ def imex_step(
     elif prm.uniform_supersaturation:
         chi_u = geom.chi
         c_before_bc = c_new
-        c_new = prm.c_0 * chi_u
+        if float(prm.c0_alpha) == 0.0:
+            c_new = prm.c_0 * chi_u
+        else:
+            ring_bc_u = geom.ring > 0.5
+            c_new = jnp.where(ring_bc_u, rim_c, prm.c_0 * chi_u)
         delta_full = jnp.sum(c_new - c_before_bc) * dx_sq
         delta_pair = jnp.stack([delta_full, delta_full])
     else:
         c_before_bc = c_new
         ring_bc = geom.ring > 0.5
-        c_new = jnp.where(ring_bc, prm.c_0, c_new)
+        c_new = jnp.where(ring_bc, rim_c, c_new)
         dc = c_new - c_before_bc
         thin_m = jnp.asarray(geom.ring_accounting, dtype=jnp.float32)
         delta_thin = jnp.sum(dc * thin_m) * dx_sq
@@ -280,10 +438,9 @@ def initial_state(
     geom: Geometry,
     key: jax.Array,
     *,
-    c_sat: float,
-    c_0: float,
+    prm: SimParams,
+    L: float,
     noise: float,
-    uniform_supersaturation: bool,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     n = geom.chi.shape[0]
     k1, k2 = jax.random.split(key)
@@ -293,11 +450,17 @@ def initial_state(
     inside = chi > 0.5
     phim = jnp.where(inside, jnp.clip(rm, -0.05, 0.05), 0.0) * chi
     phic = jnp.where(inside, jnp.clip(rc, -0.05, 0.05), 0.0) * chi
-    if uniform_supersaturation:
-        c = jnp.where(inside, c_0, 0.0) * chi
+    if prm.uniform_supersaturation:
+        if float(prm.c0_alpha) == 0.0:
+            c = jnp.where(inside, prm.c_0, 0.0) * chi
+        else:
+            rim_c = rim_dirichlet_c_targets(L, geom, prm)
+            base = jnp.where(inside, prm.c_0, 0.0) * chi
+            c = jnp.where(geom.ring > 0.5, rim_c, base)
     else:
-        c = jnp.where(inside, c_sat, 0.0) * chi
-        c = jnp.where(geom.ring > 0.5, c_0, c)
+        rim_c = rim_dirichlet_c_targets(L, geom, prm)
+        c = jnp.where(inside, prm.c_sat, 0.0) * chi
+        c = jnp.where(geom.ring > 0.5, rim_c, c)
     return c, phim, phic
 
 
@@ -401,10 +564,9 @@ def build_initial_state(
     return initial_state(
         geom,
         key,
-        c_sat=prm.c_sat,
-        c_0=prm.c_0,
+        prm=prm,
+        L=L,
         noise=float(cfg.get("noise_ic", 0.01)),
-        uniform_supersaturation=prm.uniform_supersaturation,
     )
 
 
@@ -446,13 +608,12 @@ def _integrate_flux_diagnosis(
     """Single lax.scan run with per-step influx and stdout boundary diagnostics."""
     L = float(cfg["L"])
     R = float(cfg["R"])
-    n = int(cfg["grid"])
     dt = float(cfg["dt"])
     T = float(cfg["T"])
     snap_every = int(cfg["snapshot_every"])
     seed = int(cfg.get("seed", 0))
     prm = cfg_to_sim_params(cfg)
-    geom = build_geometry(L, R, n)
+    geom = build_geometry_from_cfg(cfg)
     dx = float(geom.dx)
     key = jax.random.PRNGKey(seed)
     ring_sanity: dict[str, float] | None = None
@@ -703,7 +864,7 @@ def integrate_chunks(
     snap_every = int(cfg["snapshot_every"])
     seed = int(cfg.get("seed", 0))
     prm = cfg_to_sim_params(cfg)
-    geom = build_geometry(L, R, n)
+    geom = build_geometry_from_cfg(cfg)
     key = jax.random.PRNGKey(seed)
     ring_sanity: dict[str, float] | None = None
     if cfg.get("print_ring_mask_sanity", True):
@@ -746,6 +907,15 @@ def integrate_chunks(
     remaining = n_steps
     milestones = [1000, 10000, 100000] if cfg.get("diagnose_overshoot", False) else []
     mi = 0
+
+    record_win = bool(cfg.get("record_main_silica_window_drifts"))
+    mass_by_step: dict[int, float] = {0: float(silica0)}
+    barrier_record: set[int] = set()
+    if record_win and n_steps >= 200:
+        mid = n_steps // 2
+        barrier_record = {
+            b for b in (100, mid - 50, mid + 50, n_steps - 100, n_steps) if 0 < b <= n_steps
+        }
 
     if cfg.get("flux_sample_dt") is not None:
         flux_sample_dt = float(cfg["flux_sample_dt"])
@@ -872,13 +1042,23 @@ def integrate_chunks(
             if 0 < need <= remaining:
                 state = advance_steps(state, need)
                 remaining -= need
+                if record_win and step_count in barrier_record:
+                    mass_by_step[step_count] = _silica_total(state)
                 _print_diag(step_count, state)
                 mi += 1
                 continue
 
         take = min(chunk_size, remaining)
+        if record_win and barrier_record:
+            nxt = min((b for b in barrier_record if b > step_count), default=None)
+            if nxt is not None:
+                gap = nxt - step_count
+                if gap > 0:
+                    take = min(take, gap)
         state = advance_steps(state, take)
         remaining -= take
+        if record_win and step_count in barrier_record:
+            mass_by_step[step_count] = _silica_total(state)
 
     if bar is not None:
         bar.close()
@@ -886,6 +1066,8 @@ def integrate_chunks(
     silica1 = float(
         total_silica_jnp(state[0], state[1], state[2], geom.chi, geom.dx, prm.rho_m, prm.rho_c)
     )
+    if record_win and n_steps >= 200:
+        mass_by_step.setdefault(n_steps, float(silica1))
     dx_j = float(geom.dx)
     silica_full_initial = float(
         jax.device_get(
@@ -1005,6 +1187,33 @@ def integrate_chunks(
     }
     if mass_balance_surface_flux is not None:
         meta["mass_balance_surface_flux"] = mass_balance_surface_flux
+
+    if record_win and n_steps >= 200:
+        mid = n_steps // 2
+        ms, me = mid - 50, mid + 50
+
+        def _win_pct(a: int, b: int) -> float:
+            if a not in mass_by_step or b not in mass_by_step:
+                return float("nan")
+            m0 = mass_by_step[a]
+            m1 = mass_by_step[b]
+            den = max(abs(m0), 1e-30)
+            return float(100.0 * (m1 - m0) / den)
+
+        meta["main_silica_window_drifts"] = {
+            "basis": "χ-weighted cavity silica total (same kernel as silica_initial/final)",
+            "first_100_steps_leak_pct": _win_pct(0, 100),
+            "middle_100_steps_leak_pct": _win_pct(ms, me)
+            if ms > 0 and me <= n_steps
+            else float("nan"),
+            "last_100_steps_leak_pct": _win_pct(n_steps - 100, n_steps),
+            "mass_by_step_index": {str(k): float(v) for k, v in sorted(mass_by_step.items())},
+            "window_step_ranges": {
+                "first": [0, 100],
+                "middle": [ms, me],
+                "last": [n_steps - 100, n_steps],
+            },
+        }
     return (*state, meta)
 
 
@@ -1038,13 +1247,11 @@ def simulate_to_host(
 def simulate(cfg: dict[str, Any]) -> dict[str, Any]:
     """Short diagnostic run: periodic spectral mass series (see NOTES.md)."""
     L = float(cfg["L"])
-    R = float(cfg["R"])
-    n = int(cfg["grid"])
     dt = float(cfg["dt"])
     T = float(cfg["T"])
     snap_every = max(1, int(cfg.get("snapshot_every", 10)))
     prm = cfg_to_sim_params(cfg)
-    geom = build_geometry(L, R, n)
+    geom = build_geometry_from_cfg(cfg)
     key = jax.random.PRNGKey(int(cfg.get("seed", 0)))
     state = build_initial_state(cfg, geom, prm, key, L=L)
 

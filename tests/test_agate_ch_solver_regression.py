@@ -39,6 +39,7 @@ def test_legacy_flat_cfg_matches_pre_flag_behavior() -> None:
     assert prm.enable_reaction == 1.0
     assert prm.apply_cavity_mask is True
     assert prm.project_c_on_cavity is True
+    assert prm.c0_alpha == 0.0
 
 
 def test_enable_flags_override() -> None:
@@ -140,6 +141,20 @@ def test_flatten_stage_sequence_run_b_long_yaml() -> None:
     assert flat["project_c_on_cavity"] is False
     assert flat["T"] == 100000.0
     assert flat["snapshot_every"] == 2000
+
+
+def test_flatten_gravity_yaml_c0_alpha() -> None:
+    pytest.importorskip("yaml")
+    import yaml
+
+    from continuous_patterns.agate_ch.run import flatten_nested_cfg
+
+    raw = yaml.safe_load(
+        (REPO_ROOT / "configs" / "agate_ch" / "gravity" / "alpha_0_10.yaml").read_text()
+    )
+    flat = flatten_nested_cfg(raw)
+    assert flat["c0_alpha"] == 0.1
+    assert flat["experiment_name"] == "gravity_alpha_0_10"
 
 
 def test_initial_state_from_snapshot_roundtrip(tmp_path: Path) -> None:
