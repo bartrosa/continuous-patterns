@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from continuous_patterns.core.io import (
     save_summary,
     write_figures_final,
 )
+from continuous_patterns.core.plotting import parse_run_stamp_utc
 from continuous_patterns.core.types import SimResult
 from continuous_patterns.models import agate_ch, agate_stage2
 
@@ -104,7 +106,9 @@ def run_one(
     file_handler = _setup_run_logger(paths, log_level)
     try:
         logger.info("Dispatching to model %s", model_name)
+        t_sim0 = time.perf_counter()
         result = simulate_fn(cfg, chunk_size=chunk_size, show_progress=show_progress)
+        wall_s = time.perf_counter() - t_sim0
 
         if write_artifacts:
             assert paths is not None
@@ -118,6 +122,14 @@ def run_one(
                 chi=None,
             )
             gcfg = cfg["geometry"]
+            include_panel = bool(cfg.get("output", {}).get("include_params_panel", True))
+            ts_human = parse_run_stamp_utc(paths.root.name)
+            exp_name = str(cfg["experiment"]["name"])
+            fig_title = f"{exp_name} — {ts_human}" if ts_human else exp_name
+            params_for_panel: dict[str, Any] | None = None
+            if include_panel:
+                params_for_panel = dict(cfg)
+                params_for_panel["_diagnostics"] = {**result.diagnostics, "wall_time_s": wall_s}
             write_figures_final(
                 paths.root,
                 phi_m=np.asarray(result.state_final.phi_m),
@@ -126,6 +138,9 @@ def run_one(
                 L=float(gcfg["L"]),
                 R=float(gcfg.get("R", 0.0)),
                 chi=None,
+                title=fig_title,
+                params=params_for_panel,
+                include_params_panel=include_panel,
             )
             logger.info("Artifacts written to %s", paths.root)
             return replace(result, paths=paths)

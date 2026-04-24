@@ -17,7 +17,7 @@ from continuous_patterns.core.io import (
     save_run_config,
     save_summary,
 )
-from continuous_patterns.core.plotting import plot_fields_final
+from continuous_patterns.core.plotting import parse_run_stamp_utc, plot_fields_final
 
 
 def test_load_run_config_rejects_flat_yaml(tmp_path: Path) -> None:
@@ -122,4 +122,69 @@ def test_plot_fields_final_writes_png(tmp_path: Path) -> None:
     out = plot_fields_final(pm, pc, cc, L=L, R=0.2, path=tmp_path, chi=ch)
     assert out.name == "figures_final.png"
     assert out.is_file()
+    baseline_sz = out.stat().st_size
+    assert baseline_sz > 0
+
+    out_titled = plot_fields_final(
+        pm,
+        pc,
+        cc,
+        L=L,
+        R=0.2,
+        path=tmp_path / "titled.png",
+        chi=ch,
+        title="test_run — 2026-04-24 12:00 UTC",
+        include_params_panel=False,
+    )
+    assert out_titled.is_file()
+    assert out_titled.stat().st_size >= baseline_sz * 0.9
+
+
+def test_plot_fields_final_includes_params_panel(tmp_path: Path) -> None:
+    n = 12
+    L = 1.0
+    rng = np.random.default_rng(0)
+    pm = rng.random((n, n))
+    pc = rng.random((n, n))
+    cc = rng.random((n, n))
+    params = {
+        "experiment": {"model": "agate_ch", "name": "test"},
+        "geometry": {"L": 1.0, "R": 0.2, "n": 12},
+        "physics": {"gamma": 3.0, "kappa_x": 0.5, "kappa_y": 0.5, "use_ratchet": True},
+        "stress": {"mode": "none", "sigma_0": 0.0, "stress_coupling_B": 0.0},
+        "time": {"dt": 0.01, "T": 1.0},
+        "_diagnostics": {
+            "option_b_leak_pct": 0.42,
+            "jab_canonical": {"n_bands": 15, "q_cv": 0.12},
+            "wall_time_s": 123.4,
+        },
+    }
+    out = plot_fields_final(
+        pm,
+        pc,
+        cc,
+        L=L,
+        R=0.2,
+        path=tmp_path,
+        title="test_run — 2026-04-24 12:00 UTC",
+        params=params,
+        include_params_panel=True,
+    )
+    assert out.is_file()
     assert out.stat().st_size > 0
+    out_nopanel = plot_fields_final(
+        pm,
+        pc,
+        cc,
+        L=L,
+        R=0.2,
+        path=tmp_path / "nopanel",
+        include_params_panel=False,
+    )
+    assert out_nopanel.is_file()
+    assert out.stat().st_size > out_nopanel.stat().st_size
+
+
+def test_parse_run_stamp_utc() -> None:
+    assert parse_run_stamp_utc("20260424T105328Z") == "2026-04-24 10:53 UTC"
+    assert parse_run_stamp_utc("not-a-stamp") is None

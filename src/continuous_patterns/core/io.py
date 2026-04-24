@@ -86,6 +86,7 @@ class OutputSpec(BaseModel):
     save_final_state: bool = True
     flux_sample_dt: float | None = None
     record_spectral_mass_diagnostic: bool = False
+    include_params_panel: bool = True
 
 
 class RunConfigValidated(BaseModel):
@@ -241,6 +242,20 @@ def write_figures_final(
     L: float,
     R: float,
     chi: np.ndarray | None = None,
+    title: str | None = None,
+    params: dict[str, Any] | None = None,
+    include_params_panel: bool = True,
 ) -> Path:
     """Default figure export into ``run_root / figures_final.png`` (uses :mod:`plotting`)."""
-    return plot_fields_final(phi_m, phi_c, c, L=L, R=R, path=run_root, chi=chi)
+    return plot_fields_final(
+        phi_m,
+        phi_c,
+        c,
+        L=L,
+        R=R,
+        path=run_root,
+        chi=chi,
+        title=title,
+        params=params,
+        include_params_panel=include_params_panel,
+    )
