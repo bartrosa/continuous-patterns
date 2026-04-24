@@ -110,6 +110,7 @@ class ResultPaths:
     summary_json: Path
     config_yaml: Path
     final_state_npz: Path
+    log_file: Path
 
 
 def load_run_config(path: Path) -> dict[str, Any]:
@@ -173,6 +174,7 @@ def allocate_run_dir(*, experiment_name: str, results_root: Path) -> ResultPaths
         summary_json=root / "summary.json",
         config_yaml=root / "config.yaml",
         final_state_npz=root / "final_state.npz",
+        log_file=root / "run.log",
     )
 
 

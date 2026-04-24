@@ -40,7 +40,7 @@ def test_agate_stage2_smoke_short_run() -> None:
         },
     }
 
-    result = simulate(cfg, chunk_size=100)
+    result = simulate(cfg, chunk_size=100, show_progress=False)
 
     assert result.state_final.phi_m.shape == (32, 32)
     assert result.state_final.t == pytest.approx(5.0)

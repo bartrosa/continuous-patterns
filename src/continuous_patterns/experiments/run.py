@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from continuous_patterns.core.io import (
+    ResultPaths,
     allocate_run_dir,
     load_run_config,
     save_final_state_npz,
@@ -29,6 +31,47 @@ MODEL_DISPATCH: dict[str, Any] = {
     "agate_stage2": agate_stage2.simulate,
 }
 
+logger = logging.getLogger(__name__)
+
+_LOG_FORMAT = logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
+
+def _has_stdout_console(pkg: logging.Logger) -> bool:
+    return any(
+        isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) is sys.stdout
+        for h in pkg.handlers
+    )
+
+
+def _setup_run_logger(paths: ResultPaths | None, log_level: str) -> logging.Handler | None:
+    """Attach console (stdout) and optional file handler to ``continuous_patterns`` logger.
+
+    Returns the file handler when ``paths`` is set (caller removes it in ``finally``).
+    """
+    pkg = logging.getLogger("continuous_patterns")
+    pkg.setLevel(logging.DEBUG)
+    pkg.propagate = False
+
+    if not _has_stdout_console(pkg):
+        console = logging.StreamHandler(sys.stdout)
+        console.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+        console.setFormatter(_LOG_FORMAT)
+        pkg.addHandler(console)
+
+    file_handler: logging.Handler | None = None
+    if paths is not None:
+        log_path = paths.log_file
+        fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(_LOG_FORMAT)
+        pkg.addHandler(fh)
+        file_handler = fh
+
+    return file_handler
+
 
 def run_one(
     cfg: dict[str, Any],
@@ -36,6 +79,8 @@ def run_one(
     results_root: Path | None = None,
     chunk_size: int = 2000,
     write_artifacts: bool = True,
+    show_progress: bool = True,
+    log_level: str = "INFO",
 ) -> SimResult:
     """Run one simulation; optionally write ``results/`` artifacts.
 
@@ -46,8 +91,8 @@ def run_one(
     if model_name not in MODEL_DISPATCH:
         raise ValueError(f"Unknown model: {model_name!r}. Available: {sorted(MODEL_DISPATCH)}")
     simulate_fn = MODEL_DISPATCH[model_name]
-    result = simulate_fn(cfg, chunk_size=chunk_size)
 
+    paths: ResultPaths | None = None
     if write_artifacts:
         if results_root is None:
             raise ValueError("results_root is required when write_artifacts=True")
@@ -55,32 +100,46 @@ def run_one(
             experiment_name=str(cfg["experiment"]["name"]),
             results_root=Path(results_root),
         )
-        save_run_config(paths.config_yaml, cfg)
-        save_summary(paths.summary_json, result.diagnostics)
-        save_final_state_npz(
-            paths.final_state_npz,
-            phi_m=np.asarray(result.state_final.phi_m),
-            phi_c=np.asarray(result.state_final.phi_c),
-            c=np.asarray(result.state_final.c),
-            chi=None,
-        )
-        gcfg = cfg["geometry"]
-        write_figures_final(
-            paths.root,
-            phi_m=np.asarray(result.state_final.phi_m),
-            phi_c=np.asarray(result.state_final.phi_c),
-            c=np.asarray(result.state_final.c),
-            L=float(gcfg["L"]),
-            R=float(gcfg.get("R", 0.0)),
-            chi=None,
-        )
-        return replace(result, paths=paths)
 
-    return result
+    file_handler = _setup_run_logger(paths, log_level)
+    try:
+        logger.info("Dispatching to model %s", model_name)
+        result = simulate_fn(cfg, chunk_size=chunk_size, show_progress=show_progress)
+
+        if write_artifacts:
+            assert paths is not None
+            save_run_config(paths.config_yaml, cfg)
+            save_summary(paths.summary_json, result.diagnostics)
+            save_final_state_npz(
+                paths.final_state_npz,
+                phi_m=np.asarray(result.state_final.phi_m),
+                phi_c=np.asarray(result.state_final.phi_c),
+                c=np.asarray(result.state_final.c),
+                chi=None,
+            )
+            gcfg = cfg["geometry"]
+            write_figures_final(
+                paths.root,
+                phi_m=np.asarray(result.state_final.phi_m),
+                phi_c=np.asarray(result.state_final.phi_c),
+                c=np.asarray(result.state_final.c),
+                L=float(gcfg["L"]),
+                R=float(gcfg.get("R", 0.0)),
+                chi=None,
+            )
+            logger.info("Artifacts written to %s", paths.root)
+            return replace(result, paths=paths)
+
+        return result
+    finally:
+        if file_handler is not None:
+            pkg = logging.getLogger("continuous_patterns")
+            pkg.removeHandler(file_handler)
+            file_handler.close()
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI: ``--config``, ``--out-dir``, ``--chunk-size``, ``--no-write``."""
+    """CLI: ``--config``, ``--out-dir``, ``--chunk-size``, ``--no-write``, logging flags."""
     parser = argparse.ArgumentParser(
         prog="continuous_patterns.experiments.run",
         description="Run one simulation from a nested YAML config.",
@@ -108,6 +167,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip writing artifacts (smoke testing).",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Console log level (run.log is always DEBUG when writing artifacts).",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable tqdm progress bar.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -122,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
             results_root=None if args.no_write else args.out_dir,
             chunk_size=int(args.chunk_size),
             write_artifacts=not args.no_write,
+            show_progress=not args.no_progress,
+            log_level=str(args.log_level),
         )
     except Exception as e:
         print(f"Simulation failed: {e}", file=sys.stderr)

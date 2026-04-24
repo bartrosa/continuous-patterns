@@ -7,12 +7,15 @@ for time integration (``docs/ARCHITECTURE.md`` §4.1, ``docs/PHYSICS.md`` §6.1)
 from __future__ import annotations
 
 import copy
+import logging
+import time
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from tqdm.auto import tqdm
 
 from continuous_patterns.core.diagnostics_stage1 import (
     chi_weighted_silica_integral,
@@ -29,6 +32,8 @@ from continuous_patterns.core.spectral import k_vectors
 from continuous_patterns.core.stress import STRESS_BUILDERS
 from continuous_patterns.core.types import SimResult, SimState
 from continuous_patterns.models._integrate import make_chunk_runner
+
+logger = logging.getLogger(__name__)
 
 
 def _require(mapping: dict[str, Any], key: str, *, where: str) -> Any:
@@ -262,7 +267,9 @@ def _assemble_diagnostics(
     return out
 
 
-def simulate(cfg: dict[str, Any], *, chunk_size: int = 2000) -> SimResult:
+def simulate(
+    cfg: dict[str, Any], *, chunk_size: int = 2000, show_progress: bool = True
+) -> SimResult:
     """Run Stage I to ``time.T`` with chunked ``fori_loop`` integration."""
     cfg_resolved = copy.deepcopy(cfg)
     geom = build_geometry(cfg)
@@ -276,6 +283,17 @@ def simulate(cfg: dict[str, Any], *, chunk_size: int = 2000) -> SimResult:
     n_total = int(round(T / dt))
     if n_total <= 0:
         raise ValueError("n_total_steps = T/dt must be positive")
+
+    exp = cfg["experiment"]
+    gcfg = cfg["geometry"]
+    logger.info(
+        "Simulation start: model=%s, n=%d, T=%.1f, dt=%.4f, total_steps=%d",
+        exp["model"],
+        int(gcfg["n"]),
+        T,
+        dt,
+        n_total,
+    )
 
     seed = int(cfg.get("seed", 0))
     key = jax.random.PRNGKey(seed)
@@ -311,33 +329,66 @@ def simulate(cfg: dict[str, Any], *, chunk_size: int = 2000) -> SimResult:
     next_flux_step = flux_every
     next_snap_step = snap_every
 
-    while current_step < n_total:
-        target = n_total
-        if next_flux_step <= n_total:
-            target = min(target, next_flux_step)
-        if next_snap_step <= n_total:
-            target = min(target, next_snap_step)
-        n_run = min(chunk_size, target - current_step)
-        if n_run <= 0:
-            n_run = min(chunk_size, n_total - current_step)
-        state = run_chunk(state, n_run)
-        current_step += n_run
+    wall_t0 = time.perf_counter()
+    pbar = tqdm(
+        total=n_total,
+        desc=str(exp.get("name", "run")),
+        unit="step",
+        disable=not show_progress,
+        leave=True,
+    )
+    try:
+        while current_step < n_total:
+            target = n_total
+            if next_flux_step <= n_total:
+                target = min(target, next_flux_step)
+            if next_snap_step <= n_total:
+                target = min(target, next_snap_step)
+            n_run = min(chunk_size, target - current_step)
+            if n_run <= 0:
+                n_run = min(chunk_size, n_total - current_step)
+            state = run_chunk(state, n_run)
+            current_step += n_run
+            pbar.update(n_run)
+            pbar.set_postfix_str(f"t={current_step * dt:.3f}")
 
-        while next_flux_step <= current_step and next_flux_step <= n_total:
-            _append_flux_sample(
-                state,
-                geom,
-                meta["flux_samples"],
-                t=float(next_flux_step * dt),
-                r_fix_frac=r_fix_frac,
+            logger.debug(
+                "Chunk complete: steps %d/%d (t=%.2f)",
+                current_step,
+                n_total,
+                current_step * dt,
             )
-            next_flux_step += flux_every
 
-        while next_snap_step <= current_step and next_snap_step <= n_total:
-            meta["snapshots"].append({"step": int(next_snap_step), "t": float(next_snap_step * dt)})
-            next_snap_step += snap_every
+            while next_flux_step <= current_step and next_flux_step <= n_total:
+                _append_flux_sample(
+                    state,
+                    geom,
+                    meta["flux_samples"],
+                    t=float(next_flux_step * dt),
+                    r_fix_frac=r_fix_frac,
+                )
+                next_flux_step += flux_every
+
+            while next_snap_step <= current_step and next_snap_step <= n_total:
+                meta["snapshots"].append(
+                    {"step": int(next_snap_step), "t": float(next_snap_step * dt)}
+                )
+                logger.info(
+                    "Snapshot at t=%.1f (step %d)",
+                    float(next_snap_step * dt),
+                    int(next_snap_step),
+                )
+                next_snap_step += snap_every
+    finally:
+        pbar.close()
 
     t_final = float(n_total * dt)
+    wall_time = time.perf_counter() - wall_t0
+    logger.info(
+        "Simulation complete: wall_time=%.1fs, final_t=%.1f",
+        wall_time,
+        t_final,
+    )
     state_final = SimState(phi_m=state[0], phi_c=state[1], c=state[2], t=t_final)
     diagnostics = _assemble_diagnostics(state, geom, prm, meta)
     return SimResult(

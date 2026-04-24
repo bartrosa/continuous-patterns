@@ -10,6 +10,9 @@ Default uses full template parameters (typically ``n=512``, ``T=10000``). For a
 short local smoke, set ``CP_REPRODUCE_MINI=1`` to cap grid size and horizon.
 
 Each run prints wall time (seconds) for the user's regeneration log.
+
+Environment overrides: ``CP_LOG_LEVEL`` (default ``INFO``), ``CP_NO_PROGRESS=1``
+to disable tqdm bars.
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ from continuous_patterns.experiments.run import run_one
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_DIR = _REPO_ROOT / "src" / "continuous_patterns" / "experiments" / "templates"
+_LOG_LEVEL = os.environ.get("CP_LOG_LEVEL", "INFO")
+_SHOW_PROGRESS = os.environ.get("CP_NO_PROGRESS", "0") != "1"
 
 CANONICAL_BASELINES = [
     "agate_ch_baseline",
@@ -51,7 +56,12 @@ def reproduce_one(name: str, results_root: Path) -> float:
         cfg["time"]["T"] = min(float(cfg["time"]["T"]), 2.0)
     print(f"Running {name}...")
     t0 = time.perf_counter()
-    result = run_one(cfg, results_root=results_root)
+    result = run_one(
+        cfg,
+        results_root=results_root,
+        show_progress=_SHOW_PROGRESS,
+        log_level=_LOG_LEVEL,
+    )
     wall_s = time.perf_counter() - t0
     assert result.paths is not None
     print(f"  → {result.paths.root}")

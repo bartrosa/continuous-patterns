@@ -16,6 +16,7 @@ from typing import Any
 
 import numpy as np
 import yaml
+from tqdm.auto import tqdm
 
 from continuous_patterns.core.io import dumps_json, load_run_config
 from continuous_patterns.experiments.run import run_one
@@ -108,6 +109,8 @@ def run_sweep(
     *,
     results_root: Path,
     chunk_size: int = 2000,
+    show_progress: bool = True,
+    log_level: str = "INFO",
 ) -> SweepResult:
     """Run Cartesian product of ``grid``; write ``manifest.json`` and ``report.md``."""
     sweep_meta = sweep_cfg["sweep"]
@@ -134,7 +137,14 @@ def run_sweep(
     sweep_root.mkdir(parents=True, exist_ok=False)
 
     manifest_entries: list[dict[str, Any]] = []
-    for idx, combo in enumerate(combinations):
+    for idx, combo in tqdm(
+        enumerate(combinations),
+        total=len(combinations),
+        desc=f"Sweep {sweep_name}",
+        unit="run",
+        disable=not show_progress,
+        leave=True,
+    ):
         run_id = f"run_{idx:04d}"
         cfg_point = copy.deepcopy(base_cfg)
         for dotted_key, value in combo.items():
@@ -147,6 +157,8 @@ def run_sweep(
                 results_root=sweep_root,
                 chunk_size=chunk_size,
                 write_artifacts=True,
+                show_progress=show_progress,
+                log_level=log_level,
             )
             status = "success"
             assert result.paths is not None
@@ -205,6 +217,17 @@ def main(argv: list[str] | None = None) -> int:
         default=2000,
         help="IMEX chunk size passed to each run.",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Console log level (each run's run.log is DEBUG when artifacts are written).",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable tqdm (sweep bar and per-run bars).",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -221,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
             sweep_cfg,
             results_root=Path(args.out_dir),
             chunk_size=int(args.chunk_size),
+            show_progress=not args.no_progress,
+            log_level=str(args.log_level),
         )
     except Exception as e:
         print(f"Sweep failed: {e}", file=sys.stderr)

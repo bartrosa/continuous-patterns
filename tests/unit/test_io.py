@@ -70,6 +70,7 @@ def test_allocate_run_dir_creates_timestamped_layout(tmp_path: Path) -> None:
     assert rp.summary_json == rp.root / "summary.json"
     assert rp.config_yaml == rp.root / "config.yaml"
     assert rp.final_state_npz == rp.root / "final_state.npz"
+    assert rp.log_file == rp.root / "run.log"
     assert rp.root.parent.name == "agate_ch"
 
 
