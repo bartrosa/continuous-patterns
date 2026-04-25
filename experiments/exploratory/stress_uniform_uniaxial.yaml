@@ -1,6 +1,6 @@
 experiment:
   name: stress_uniform_uniaxial
-  model: agate_ch
+  model: cavity_reactive
   seed: 42
   description: |
     Exploratory: medium_pinning-like physics + uniform uniaxial stress (not paper v2 canonical).

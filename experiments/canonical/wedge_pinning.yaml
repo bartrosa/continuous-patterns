@@ -1,6 +1,6 @@
 experiment:
   name: wedge_pinning
-  model: agate_ch
+  model: cavity_reactive
   seed: 42
   description: |
     Q1/Q2 baseline on a 120° annular wedge opening upward (same physics as medium_pinning).

@@ -1,9 +1,9 @@
 experiment:
-  name: stress_pressure_gradient
+  name: stress_kirsch
   model: cavity_reactive
   seed: 42
   description: |
-    Exploratory: medium_pinning-like physics + pressure-gradient stress (not paper v2 canonical).
+    Canonical card for Kirsch stress around circular cavity; R synced from geometry.
 
 geometry:
   type: circular_cavity
@@ -31,10 +31,11 @@ physics:
   phi_m_ratchet_high: 0.5
 
 stress:
-  mode: pressure_gradient
-  sigma_0: 0.5
+  mode: kirsch
+  S_xx_far: 1.0
+  S_yy_far: 0.3
+  S_xy_far: 0.0
   stress_coupling_B: 0.3
-  stress_eps_factor: 3.0
 
 time:
   T: 10000.0

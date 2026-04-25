@@ -1,6 +1,9 @@
+# NOTE: aging demo runs in the kinetic-trap regime (PHYSICS.md §3.5, docs/TODOs.md).
+# Demonstrates the code path, not clean uniform moganite-to-chalcedony conversion.
+
 experiment:
   name: aging_demo
-  model: agate_ch
+  model: cavity_reactive
   seed: 42
   description: |
     Closed cavity, initially filled with moganite, aging to chalcedony

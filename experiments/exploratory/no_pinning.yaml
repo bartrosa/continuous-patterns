@@ -1,10 +1,10 @@
 experiment:
-  name: ratchet_only
-  model: agate_ch
+  name: no_pinning
+  model: cavity_reactive
   seed: 42
   description: |
-    Same γ and M_m as no_pinning, but ratchet on (0.3–0.5). Isolates ratchet
-    effect without changing γ or moganite mobility.
+    v1-era physics without pinning mechanism (γ=2, M_m=0.1, ratchet off).
+    Reference without ratchet / strong γ — falsification control for Q1/Q2.
 
 geometry:
   type: circular_cavity
@@ -27,9 +27,7 @@ physics:
   c_ostwald: 0.6
   w_ostwald: 0.1
   lambda_bar: 10.0
-  use_ratchet: true
-  phi_m_ratchet_low: 0.3
-  phi_m_ratchet_high: 0.5
+  use_ratchet: false
 
 stress:
   mode: none

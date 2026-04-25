@@ -1,10 +1,11 @@
-"""Stage II — bulk periodic CH relaxation (no reaction, no rim Dirichlet).
+"""Stage II pure Cahn--Hilliard bulk relaxation (no reaction, no cavity, no rim).
 
-Uses the same :func:`continuous_patterns.core.imex.imex_step` with
-``reaction_active=False`` and ``dirichlet_active=False``. Post-processing uses
+Long-time coarsening of phase fields on a periodic torus with no chemical source
+and no rim boundary conditions. Uses :func:`continuous_patterns.core.imex.imex_step`
+with ``reaction_active=False`` and ``dirichlet_active=False``. Post-processing uses
 ``diagnostics_stage2`` only (``docs/ARCHITECTURE.md`` §4.2).
 
-Differences from Stage I (:mod:`continuous_patterns.models.agate_ch`):
+Differences from Stage I (:mod:`continuous_patterns.models.cavity_reactive`):
 
 - **No** ``flux_samples`` in ``meta`` (no rim / Option B dense path).
 - **Diagnostics** are bulk-only: structure factor, coarsening / interface metrics,
@@ -37,10 +38,14 @@ from continuous_patterns.core.diagnostics_stage2 import (
 from continuous_patterns.core.imex import Geometry, SimParams
 from continuous_patterns.core.io import apply_physics_phases_legacy_shim
 from continuous_patterns.core.spectral import k_vectors
-from continuous_patterns.core.stress import STRESS_BUILDERS
+from continuous_patterns.core.stress import (
+    STRESS_BUILDERS,
+    apply_pore_pressure,
+    pore_pressure_field,
+)
 from continuous_patterns.core.types import SimResult, SimState
 from continuous_patterns.models._integrate import make_chunk_runner
-from continuous_patterns.models.agate_ch import (
+from continuous_patterns.models.cavity_reactive import (
     _append_host_fields_snapshot,
     phase_potential_params_from_spec,
 )
@@ -91,15 +96,37 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
     if smode not in STRESS_BUILDERS:
         raise ValueError(f"Unknown stress.mode {smode!r}; allowed: {sorted(STRESS_BUILDERS)}")
     skwargs: dict[str, Any] = {"L": L, "n": n, "dtype": dtype}
-    # ``stress_eps_factor`` only used by ``flamant_two_point`` (see agate_ch ``build_geometry``).
-    _skip = frozenset({"mode", "stress_coupling_B", "stress_eps_factor", "dtype"})
+    # ``stress_eps_factor``: see ``flamant_two_point`` / cavity_reactive ``build_geometry``.
+    _skip = frozenset({"mode", "stress_coupling_B", "stress_eps_factor", "dtype", "pore_pressure"})
+    _modes_use_sigma0 = frozenset(
+        {
+            "uniform_uniaxial",
+            "uniform_biaxial",
+            "pure_shear",
+            "flamant_two_point",
+            "pressure_gradient",
+        }
+    )
     for k, v in st.items():
-        if k in _skip:
+        if k in _skip or v is None:
+            continue
+        if k == "sigma_0" and smode not in _modes_use_sigma0:
             continue
         skwargs.setdefault(k, v)
     if smode == "flamant_two_point":
         skwargs["stress_eps_factor"] = float(st.get("stress_eps_factor", 3.0))
+    if smode in ("kirsch", "inglis") and "S_xy_far" not in skwargs:
+        skwargs["S_xy_far"] = float(st.get("S_xy_far", 0.0))
+    if smode == "tectonic_far_field" and "theta_SH" not in skwargs:
+        skwargs["theta_SH"] = float(st.get("theta_SH", 0.0))
     sxx, syy, sxy = STRESS_BUILDERS[smode](**skwargs)
+    pp = st.get("pore_pressure")
+    if isinstance(pp, dict) and pp:
+        psp = pp.get("field", "uniform")
+        p0 = float(pp["p0"])
+        bi = float(pp.get("biot_alpha", 1.0))
+        p_arr = pore_pressure_field(L=L, n=n, field=str(psp), p0=p0, dtype=dtype)
+        sxx, syy, sxy = apply_pore_pressure(sxx, syy, sxy, p_pore=p_arr, biot_alpha=bi)
 
     def _to(x: Any) -> Array:
         return jnp.asarray(x, dtype=dtype)
@@ -205,6 +232,12 @@ def build_sim_params(cfg: dict[str, Any]) -> SimParams:
         use_ratchet=bool(ph.get("use_ratchet", False)),
         phi_m_ratchet_low=float(ph.get("phi_m_ratchet_low", 0.3)),
         phi_m_ratchet_high=float(ph.get("phi_m_ratchet_high", 0.5)),
+        gravity_rim_alpha=float(cfg.get("gravity", {}).get("rim_alpha", 0.0)),
+        gravity_g_c=float(cfg.get("gravity", {}).get("g_c", 0.0)),
+        gravity_g_phi_m=float(cfg.get("gravity", {}).get("g_phi_m", 0.0)),
+        gravity_g_phi_c=float(cfg.get("gravity", {}).get("g_phi_c", 0.0)),
+        gravity_g_phi_q=float(cfg.get("gravity", {}).get("g_phi_q", 0.0)),
+        gravity_g_phi_imp=float(cfg.get("gravity", {}).get("g_phi_imp", 0.0)),
     )
 
 
@@ -247,7 +280,17 @@ def build_initial_state(
         phi_imp = phi_imp0 + sig_imp * jax.random.normal(k_i, (n, n), dtype=dtype)
     else:
         phi_imp = jnp.zeros((n, n), dtype=dtype)
-    c0 = float(ic.get("c_init", ph.get("c_0", 0.0)))
+    if "c_init" in ic and ic.get("c_init_factor") is not None:
+        raise ValueError("initial: set at most one of c_init and c_init_factor")
+    c_sat = float(ph.get("c_sat", 0.0))
+    if ic.get("c_init_factor") is not None:
+        c0 = c_sat * float(ic["c_init_factor"])
+    elif "c_init" in ic and ic["c_init"] is None:
+        c0 = float(ph.get("c_0", 0.0))
+    elif "c_init" in ic:
+        c0 = float(ic["c_init"])
+    else:
+        c0 = float(ic.get("c_init", ph.get("c_0", 0.0)))
     c = jnp.full((n, n), c0, dtype=dtype)
     return SimState(phi_m=phi_m, phi_c=phi_c, phi_q=phi_q, phi_imp=phi_imp, c=c, t=0.0)
 
@@ -373,7 +416,7 @@ def simulate(
         "chunk_size": chunk_size,
         "n_steps": n_total,
         "snapshots": [],
-        "stage": "agate_stage2",
+        "stage": "bulk_relaxation",
         "M_total_initial": m_total_initial,
     }
     if save_h5:

@@ -1,7 +1,13 @@
-"""Stage I — reaction-coupled CH with cavity masks and rim Dirichlet.
+"""Stage I reactive Cahn--Hilliard with confined geometry.
 
-Assembles ``Geometry``, ``SimParams``, and calls :mod:`continuous_patterns.core.imex`
-for time integration (``docs/ARCHITECTURE.md`` §4.1, ``docs/PHYSICS.md`` §6.1).
+Couples phase fields (``phi_m``, ``phi_c``, optional ``phi_q``, ``phi_imp``) to a
+dissolved-species concentration (``c``) under reaction--diffusion in a prescribed
+cavity geometry, with rim Dirichlet on ``c``. Optional ψ-split stress coupling,
+gravity body forces, aging, and per-phase potential dispatch.
+Used historically for agate banding; the implementation applies to any reactive
+two-or-more solid polymorph system in a masked cavity.
+Assembles ``Geometry``, ``SimParams``, and :mod:`continuous_patterns.core.imex` time
+integration (``docs/ARCHITECTURE.md`` §4.1, ``docs/PHYSICS.md`` §6.1).
 """
 
 from __future__ import annotations
@@ -31,7 +37,11 @@ from continuous_patterns.core.imex import Geometry, SimParams
 from continuous_patterns.core.io import apply_physics_phases_legacy_shim
 from continuous_patterns.core.masks import MASK_BUILDERS
 from continuous_patterns.core.spectral import k_vectors
-from continuous_patterns.core.stress import STRESS_BUILDERS
+from continuous_patterns.core.stress import (
+    STRESS_BUILDERS,
+    apply_pore_pressure,
+    pore_pressure_field,
+)
 from continuous_patterns.core.stress import none as stress_none
 from continuous_patterns.core.types import PhasePotentialParams, SimResult, SimState
 from continuous_patterns.models._integrate import make_chunk_runner
@@ -123,15 +133,50 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
     skwargs: dict[str, Any] = {"L": L, "n": n, "dtype": dtype}
     if smode in ("flamant_two_point", "kirsch"):
         skwargs["R"] = float(m["R"])
+    elif smode == "inglis":
+        skwargs["a"] = float(_require(st, "a", where="config.stress"))
+        skwargs["b"] = float(_require(st, "b", where="config.stress"))
+        skwargs["theta"] = float(st.get("theta", 0.0))
     # ``stress_eps_factor``: validated on the stress block; only Flamant builder uses it.
-    _skip = frozenset({"mode", "stress_coupling_B", "stress_eps_factor", "dtype"})
+    _skip = frozenset(
+        {
+            "mode",
+            "stress_coupling_B",
+            "stress_eps_factor",
+            "dtype",
+            "pore_pressure",
+        }
+    )
+    _modes_use_sigma0 = frozenset(
+        {
+            "uniform_uniaxial",
+            "uniform_biaxial",
+            "pure_shear",
+            "flamant_two_point",
+            "pressure_gradient",
+        }
+    )
     for k, v in st.items():
-        if k in _skip:
+        if k in _skip or v is None:
+            continue
+        if k == "sigma_0" and smode not in _modes_use_sigma0:
             continue
         skwargs.setdefault(k, v)
     if smode == "flamant_two_point":
         skwargs["stress_eps_factor"] = float(st.get("stress_eps_factor", 3.0))
+    if smode == "tectonic_far_field" and "theta_SH" not in skwargs:
+        skwargs["theta_SH"] = float(st.get("theta_SH", 0.0))
+    if smode in ("kirsch", "inglis"):
+        if "S_xy_far" not in skwargs:
+            skwargs["S_xy_far"] = float(st.get("S_xy_far", 0.0))
     sxx, syy, sxy = STRESS_BUILDERS[smode](**skwargs)
+    pp = st.get("pore_pressure")
+    if isinstance(pp, dict) and pp:
+        psp = pp.get("field", "uniform")
+        p0 = float(pp["p0"])
+        bi = float(pp.get("biot_alpha", 1.0))
+        p_arr = pore_pressure_field(L=L, n=n, field=str(psp), p0=p0, dtype=dtype)
+        sxx, syy, sxy = apply_pore_pressure(sxx, syy, sxy, p_pore=p_arr, biot_alpha=bi)
 
     def _to(x: Any) -> Array:
         return jnp.asarray(x, dtype=dtype)
@@ -238,6 +283,12 @@ def build_sim_params(cfg: dict[str, Any]) -> SimParams:
         use_ratchet=bool(ph.get("use_ratchet", True)),
         phi_m_ratchet_low=float(ph.get("phi_m_ratchet_low", 0.3)),
         phi_m_ratchet_high=float(ph.get("phi_m_ratchet_high", 0.5)),
+        gravity_rim_alpha=float(cfg.get("gravity", {}).get("rim_alpha", 0.0)),
+        gravity_g_c=float(cfg.get("gravity", {}).get("g_c", 0.0)),
+        gravity_g_phi_m=float(cfg.get("gravity", {}).get("g_phi_m", 0.0)),
+        gravity_g_phi_c=float(cfg.get("gravity", {}).get("g_phi_c", 0.0)),
+        gravity_g_phi_q=float(cfg.get("gravity", {}).get("g_phi_q", 0.0)),
+        gravity_g_phi_imp=float(cfg.get("gravity", {}).get("g_phi_imp", 0.0)),
     )
 
 
@@ -283,7 +334,16 @@ def build_initial_state(
 
     c_sat = float(_require(ph, "c_sat", where="physics"))
     _ = float(_require(ph, "c_0", where="physics"))  # must be present for rim Dirichlet
-    c_init_interior = float(ic.get("c_init", c_sat))
+    if "c_init" in ic and ic.get("c_init_factor") is not None:
+        raise ValueError("initial: set at most one of c_init and c_init_factor")
+    if ic.get("c_init_factor") is not None:
+        c_init_interior = c_sat * float(ic["c_init_factor"])
+    elif "c_init" in ic and ic["c_init"] is None:
+        c_init_interior = c_sat
+    elif "c_init" in ic:
+        c_init_interior = float(ic["c_init"])
+    else:
+        c_init_interior = c_sat
     c = c_init_interior * chi
     c = jnp.asarray(c, dtype=dtype)
     return phi_m, phi_c, phi_q, phi_imp, c

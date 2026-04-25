@@ -21,11 +21,31 @@ from typing import Any, Literal, Self
 
 import numpy as np
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from continuous_patterns.core.plotting import plot_fields_final
 
 logger = logging.getLogger(__name__)
+
+_LEGACY_MODEL_ALIASES: dict[str, str] = {
+    "agate_ch": "cavity_reactive",
+    "agate_stage2": "bulk_relaxation",
+}
+
+
+def resolve_model_name(name: str) -> str:
+    """Map deprecated model keys to current names; log once per legacy key usage."""
+    if name in _LEGACY_MODEL_ALIASES:
+        new_name = _LEGACY_MODEL_ALIASES[name]
+        logger.warning(
+            "Model name %r is deprecated; use %r. "
+            "Legacy alias will be removed in a future version.",
+            name,
+            new_name,
+        )
+        return new_name
+    return name
+
 
 _MIGRATION_HINT = (
     "Flat or non-nested configs are not supported. Convert archived YAML to nested "
@@ -39,9 +59,17 @@ class ExperimentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = "run"
-    model: Literal["agate_ch", "agate_stage2"]
+    model: Literal["cavity_reactive", "bulk_relaxation"]
     seed: int = 42
     description: str | None = None
+    scenario: str | None = None
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def _coerce_legacy_model_name(cls, v: object) -> object:
+        if isinstance(v, str):
+            return resolve_model_name(v)
+        return v
 
 
 class GeometrySpec(BaseModel):
@@ -221,6 +249,16 @@ class GeometrySpec(BaseModel):
         return self
 
 
+class PorePressureSpec(BaseModel):
+    """Optional Terzaghi/Biot pore-pressure modifier on normal stresses."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: Literal["uniform", "hydrostatic"] = "uniform"
+    p0: float = Field(ge=0.0)
+    biot_alpha: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
 class StressSpec(BaseModel):
     """Prescribed Cauchy stress mode and ψ-coupling strength."""
 
@@ -234,10 +272,225 @@ class StressSpec(BaseModel):
         "flamant_two_point",
         "pressure_gradient",
         "kirsch",
+        "lithostatic",
+        "tectonic_far_field",
+        "inglis",
     ] = "none"
     sigma_0: float = 0.0
     stress_coupling_B: float = 0.0
     stress_eps_factor: float = Field(default=3.0, gt=0)
+    rho_g_dim: float | None = Field(default=None, gt=0)
+    lateral_K: float | None = Field(default=None, gt=0)
+    S_H: float | None = None
+    S_h: float | None = None
+    S_V: float | None = None
+    theta_SH: float | None = None
+    R: float | None = Field(default=None, gt=0)
+    a: float | None = Field(default=None, gt=0)
+    b: float | None = Field(default=None, gt=0)
+    theta: float | None = None
+    S_xx_far: float | None = None
+    S_yy_far: float | None = None
+    S_xy_far: float | None = None
+    pore_pressure: PorePressureSpec | None = None
+
+    @model_validator(mode="after")
+    def _stress_mode_fields(self) -> Self:
+        m = self.mode
+        d = self.model_dump()
+        missing: list[str] = []
+
+        def forbid(keys: frozenset[str], label: str) -> None:
+            bad = [k for k in keys if d.get(k) is not None]
+            if bad:
+                raise ValueError(f"stress.mode={label!r} must not set: {sorted(bad)}")
+
+        if m == "none":
+            forbid(
+                frozenset(
+                    {
+                        "rho_g_dim",
+                        "lateral_K",
+                        "S_H",
+                        "S_h",
+                        "S_V",
+                        "theta_SH",
+                        "R",
+                        "a",
+                        "b",
+                        "theta",
+                        "S_xx_far",
+                        "S_yy_far",
+                        "S_xy_far",
+                    }
+                ),
+                "none",
+            )
+        elif m in ("uniform_uniaxial", "uniform_biaxial", "pure_shear"):
+            forbid(
+                frozenset(
+                    {
+                        "rho_g_dim",
+                        "lateral_K",
+                        "S_H",
+                        "S_h",
+                        "S_V",
+                        "theta_SH",
+                        "R",
+                        "a",
+                        "b",
+                        "theta",
+                        "S_xx_far",
+                        "S_yy_far",
+                        "S_xy_far",
+                    }
+                ),
+                m,
+            )
+        elif m == "flamant_two_point":
+            forbid(
+                frozenset(
+                    {
+                        "rho_g_dim",
+                        "lateral_K",
+                        "S_H",
+                        "S_h",
+                        "S_V",
+                        "theta_SH",
+                        "a",
+                        "b",
+                        "theta",
+                        "S_xx_far",
+                        "S_yy_far",
+                        "S_xy_far",
+                    }
+                ),
+                "flamant_two_point",
+            )
+        elif m == "pressure_gradient":
+            forbid(
+                frozenset(
+                    {
+                        "rho_g_dim",
+                        "lateral_K",
+                        "S_H",
+                        "S_h",
+                        "S_V",
+                        "theta_SH",
+                        "R",
+                        "a",
+                        "b",
+                        "theta",
+                        "S_xx_far",
+                        "S_yy_far",
+                        "S_xy_far",
+                    }
+                ),
+                "pressure_gradient",
+            )
+        elif m == "lithostatic":
+            forbid(
+                frozenset(
+                    {
+                        "S_H",
+                        "S_h",
+                        "S_V",
+                        "theta_SH",
+                        "R",
+                        "a",
+                        "b",
+                        "theta",
+                        "S_xx_far",
+                        "S_yy_far",
+                        "S_xy_far",
+                    }
+                ),
+                "lithostatic",
+            )
+            if self.rho_g_dim is None:
+                missing.append("rho_g_dim")
+            if self.lateral_K is None:
+                missing.append("lateral_K")
+            elif not (0.0 < float(self.lateral_K) <= 1.0 + 1e-9):
+                raise ValueError("lithostatic requires 0 < lateral_K <= 1")
+        elif m == "tectonic_far_field":
+            forbid(
+                frozenset(
+                    {
+                        "rho_g_dim",
+                        "lateral_K",
+                        "R",
+                        "a",
+                        "b",
+                        "theta",
+                        "S_xx_far",
+                        "S_yy_far",
+                        "S_xy_far",
+                    }
+                ),
+                "tectonic_far_field",
+            )
+            for key in ("S_H", "S_h", "S_V"):
+                if d.get(key) is None:
+                    missing.append(key)
+        elif m == "kirsch":
+            forbid(
+                frozenset(
+                    {
+                        "rho_g_dim",
+                        "lateral_K",
+                        "S_H",
+                        "S_h",
+                        "S_V",
+                        "theta_SH",
+                        "a",
+                        "b",
+                        "theta",
+                    }
+                ),
+                "kirsch",
+            )
+            if self.S_xx_far is None:
+                missing.append("S_xx_far")
+            if self.S_yy_far is None:
+                missing.append("S_yy_far")
+        elif m == "inglis":
+            forbid(
+                frozenset(
+                    {
+                        "rho_g_dim",
+                        "lateral_K",
+                        "S_H",
+                        "S_h",
+                        "S_V",
+                        "theta_SH",
+                        "R",
+                    }
+                ),
+                "inglis",
+            )
+            if self.S_xx_far is None:
+                missing.append("S_xx_far")
+            if self.S_yy_far is None:
+                missing.append("S_yy_far")
+        if missing:
+            raise ValueError(
+                f"stress.mode={m!r} missing required field(s): {missing} (see docs for this mode)"
+            )
+        return self
+
+
+class GravitySpec(BaseModel):
+    """Optional gravity: rim ramp + body-force advection (Package 4)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rim_alpha: float = 0.0
+    g_c: float = 0.0
+    g_phi_m: float = 0.0
+    g_phi_c: float = 0.0
+    g_phi_q: float = 0.0
+    g_phi_imp: float = 0.0
 
 
 class TimeSpec(BaseModel):
@@ -338,6 +591,7 @@ class RunConfigValidated(BaseModel):
     geometry: GeometrySpec
     physics: dict[str, Any] = Field(default_factory=dict)
     stress: StressSpec = Field(default_factory=StressSpec)
+    gravity: GravitySpec = Field(default_factory=GravitySpec)
     time: TimeSpec
     output: OutputSpec = Field(default_factory=OutputSpec)
     initial: dict[str, Any] = Field(default_factory=dict)
@@ -367,6 +621,46 @@ class RunConfigValidated(BaseModel):
             phys["aging"] = AgingSpec().model_dump(mode="python")
         return self
 
+    @model_validator(mode="after")
+    def _stress_geometry_coupling(self) -> Self:
+        st = self.stress
+        g = self.geometry
+        if st.mode == "kirsch":
+            if g.type != "circular_cavity":
+                raise ValueError("stress.mode='kirsch' requires geometry.type='circular_cavity'")
+            gr = g.R
+            if gr is None:
+                raise ValueError("kirsch requires geometry.R for circular_cavity")
+            if st.R is not None and abs(float(st.R) - float(gr)) > 1e-9:
+                raise ValueError(
+                    f"stress.R={st.R!r} conflicts with geometry.R={gr!r} for kirsch mode"
+                )
+            if st.R is None:
+                return self.model_copy(update={"stress": st.model_copy(update={"R": float(gr)})})
+        elif st.mode == "inglis":
+            if g.type != "elliptic_cavity":
+                raise ValueError("stress.mode='inglis' requires geometry.type='elliptic_cavity'")
+            ga, gb, gt = g.a, g.b, g.theta
+            if ga is None or gb is None:
+                raise ValueError("inglis requires geometry.a and geometry.b")
+            gtheta = 0.0 if gt is None else float(gt)
+            upd: dict[str, Any] = {}
+            if st.a is not None and abs(float(st.a) - float(ga)) > 1e-9:
+                raise ValueError(f"stress.a={st.a!r} conflicts with geometry.a={ga!r}")
+            if st.b is not None and abs(float(st.b) - float(gb)) > 1e-9:
+                raise ValueError(f"stress.b={st.b!r} conflicts with geometry.b={gb!r}")
+            if st.theta is not None and abs(float(st.theta) - gtheta) > 1e-9:
+                raise ValueError(f"stress.theta={st.theta!r} conflicts with geometry.theta")
+            if st.a is None:
+                upd["a"] = float(ga)
+            if st.b is None:
+                upd["b"] = float(gb)
+            if st.theta is None and gt is not None:
+                upd["theta"] = gtheta
+            if upd:
+                return self.model_copy(update={"stress": st.model_copy(update=upd)})
+        return self
+
 
 @dataclass(frozen=True)
 class ResultPaths:
@@ -382,6 +676,71 @@ class ResultPaths:
 
 
 _SOLVER_SETTINGS_DEFAULT = Path("experiments/solver_settings.yaml")
+
+# Preset fragments merged after library+user defaults and before the experiment YAML
+# (see Package 6 — ``initial.scenario``).
+# Aging scenarios (``closed_aging``, ``open_aging``) initialise a small chalcedony seed density
+# (``phi_c_init`` = 0.05) because uniform moganite is kinetically trapped by the double-well —
+# see ``docs/PHYSICS.md`` §3.5.
+SCENARIO_PRESETS: dict[str, dict[str, Any]] = {
+    "open_inflow": {
+        "physics": {"reaction_active": True, "dirichlet_active": True},
+        "initial": {
+            "phi_m_init": 0.0,
+            "phi_c_init": 0.0,
+            "phi_m_noise": 0.01,
+            "phi_c_noise": 0.01,
+        },
+    },
+    "closed_supersaturated": {
+        "physics": {"reaction_active": True, "dirichlet_active": False},
+        "initial": {
+            "phi_m_init": 0.0,
+            "phi_c_init": 0.0,
+            "phi_m_noise": 0.01,
+            "phi_c_noise": 0.01,
+            "c_init_factor": 1.5,
+        },
+    },
+    "closed_aging": {
+        "physics": {
+            "reaction_active": False,
+            "dirichlet_active": False,
+            "aging": {"active": True, "k_age": 0.01, "q_to_quartz": 0.0},
+        },
+        "initial": {
+            "phi_m_init": 0.95,
+            "phi_c_init": 0.05,
+            "phi_m_noise": 0.005,
+            "phi_c_noise": 0.02,
+            "c_init": 0.0,
+        },
+    },
+    "open_aging": {
+        "physics": {
+            "reaction_active": True,
+            "dirichlet_active": True,
+            "aging": {"active": True, "k_age": 0.005, "q_to_quartz": 0.0},
+        },
+        "initial": {
+            "phi_m_init": 0.8,
+            "phi_c_init": 0.05,
+            "phi_m_noise": 0.01,
+            "phi_c_noise": 0.02,
+        },
+    },
+    "bulk_relaxation": {
+        "experiment": {"model": "bulk_relaxation"},
+        "physics": {"reaction_active": False, "dirichlet_active": False},
+        "initial": {
+            "phi_m_init": 0.5,
+            "phi_c_init": 0.5,
+            "phi_m_noise": 0.05,
+            "phi_c_noise": 0.05,
+            "c_init": 0.0,
+        },
+    },
+}
 
 _warned_gif_hard_disabled: bool = False
 _warned_h5_hard_disabled: bool = False
@@ -460,7 +819,8 @@ def load_run_config(
     1. Library defaults (``continuous_patterns.defaults.solver_defaults.yaml``).
     2. User overrides: ``experiments/solver_settings.yaml`` when present, or
        ``user_settings_path`` when passed explicitly.
-    3. Experiment YAML at ``experiment_path``.
+    3. Scenario preset from ``initial.scenario`` when set (see ``SCENARIO_PRESETS``).
+    4. Experiment YAML at ``experiment_path``.
 
     Parameters
     ----------
@@ -501,7 +861,23 @@ def load_run_config(
         )
 
     merged = _deep_merge(defaults, user)
+    scenario_key: str | None = None
+    init_raw = raw_exp.get("initial")
+    if isinstance(init_raw, dict):
+        sk = init_raw.get("scenario")
+        if sk is not None:
+            scenario_key = str(sk)
+            if scenario_key not in SCENARIO_PRESETS:
+                raise ValueError(
+                    f"initial.scenario={scenario_key!r} is unknown; "
+                    f"allowed: {sorted(SCENARIO_PRESETS)}"
+                )
+            merged = _deep_merge(merged, SCENARIO_PRESETS[scenario_key])
     merged = _deep_merge(merged, raw_exp)
+    if scenario_key is not None:
+        exp_block = merged.setdefault("experiment", {})
+        if isinstance(exp_block, dict):
+            exp_block.setdefault("scenario", scenario_key)
     _coerce_expensive_output_flags(merged)
 
     # Option D (spectral mass drift) is always recorded when supported by the model driver.

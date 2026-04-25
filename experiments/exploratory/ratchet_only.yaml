@@ -1,10 +1,10 @@
 experiment:
-  name: medium_pinning_seed123
-  model: agate_ch
-  seed: 123
+  name: ratchet_only
+  model: cavity_reactive
+  seed: 42
   description: |
-    Seed-robustness: identical physics to medium_pinning, different RNG seed.
-    Morphology should match medium_pinning qualitatively.
+    Same γ and M_m as no_pinning, but ratchet on (0.3–0.5). Isolates ratchet
+    effect without changing γ or moganite mobility.
 
 geometry:
   type: circular_cavity
@@ -15,10 +15,10 @@ geometry:
 
 physics:
   W: 1.0
-  gamma: 4.0
+  gamma: 2.0
   kappa_x: 0.5
   kappa_y: 0.5
-  M_m: 0.01
+  M_m: 0.1
   M_c: 1.0
   D_c: 1.0
   k_rxn: 0.5

@@ -1,10 +1,10 @@
 experiment:
-  name: stress_flamant
-  model: agate_ch
+  name: stress_uniform_biaxial
+  model: cavity_reactive
   seed: 42
   description: |
-    medium_pinning physics + Flamant two-point load (PHYSICS §7.4).
-    Anisotropic stress should break circular band symmetry.
+    medium_pinning physics + isotropic biaxial stress (σ_xx = σ_yy = σ_0).
+    Tests circular symmetry of bands under isotropic loading.
 
 geometry:
   type: circular_cavity
@@ -32,7 +32,7 @@ physics:
   phi_m_ratchet_high: 0.5
 
 stress:
-  mode: flamant_two_point
+  mode: uniform_biaxial
   sigma_0: 0.5
   stress_coupling_B: 0.3
   stress_eps_factor: 3.0

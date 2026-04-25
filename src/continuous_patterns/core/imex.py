@@ -23,6 +23,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from continuous_patterns.core.gravity import body_force_advection_y, rim_ramp_field
 from continuous_patterns.core.potentials import POTENTIAL_BUILDERS, barrier_prime
 from continuous_patterns.core.stress import mu_stress_real
 from continuous_patterns.core.types import PhasePotentialParams
@@ -116,6 +117,12 @@ class SimParams:
     use_ratchet: bool = True
     phi_m_ratchet_low: float = 0.3
     phi_m_ratchet_high: float = 0.5
+    gravity_rim_alpha: float = 0.0
+    gravity_g_c: float = 0.0
+    gravity_g_phi_m: float = 0.0
+    gravity_g_phi_c: float = 0.0
+    gravity_g_phi_q: float = 0.0
+    gravity_g_phi_imp: float = 0.0
 
 
 def _potential_kwargs_for_kind(pot: PhasePotentialParams) -> dict[str, float]:
@@ -330,8 +337,18 @@ def imex_step(
     g_hat = jnp.fft.fft2(chi * G)
     c_den = 1.0 + dt * prm.D_c * geom.k_sq
     c_new_hat = (c_hat - dt * g_hat) / c_den
-    c_new = jnp.real(jnp.fft.ifft2(c_new_hat))
-    c_new = (1.0 - chi) * c + chi * c_new
+    c_lin = jnp.real(jnp.fft.ifft2(c_new_hat))
+
+    def _grav_c_on(_: Array) -> Array:
+        dy_c = body_force_advection_y(c_hat, geom.ky_wave)
+        return c_lin - dt * prm.gravity_g_c * dy_c
+
+    def _grav_c_off(_: Array) -> Array:
+        return c_lin
+
+    zc = jnp.asarray(0.0, dtype=c.dtype)
+    c_lin2 = jax.lax.cond(jnp.asarray(abs(prm.gravity_g_c) > 1e-20), _grav_c_on, _grav_c_off, zc)
+    c_new = (1.0 - chi) * c + chi * c_lin2
 
     stress_pred = jnp.logical_and(
         jnp.asarray(prm.stress_coupling_B > 1e-20),
@@ -369,7 +386,16 @@ def imex_step(
             continue
         cross = _gamma_cross_sum_other(phi_m, phi_c, phi_q, phi_imp, prm, skip=name)
         sd = _stress_delta(mu_stress, pot)
-        new_phis[name] = _update_phase(phi, cross, chi, geom, prm, dt, pot, sd)
+        phi_u = _update_phase(phi, cross, chi, geom, prm, dt, pot, sd)
+        gv = {
+            "phi_m": prm.gravity_g_phi_m,
+            "phi_c": prm.gravity_g_phi_c,
+            "phi_q": prm.gravity_g_phi_q,
+            "phi_imp": prm.gravity_g_phi_imp,
+        }[name]
+        dy_phi = body_force_advection_y(jnp.fft.fft2(phi_u), geom.ky_wave)
+        phi_n = phi_u - dt * jnp.asarray(float(gv), dtype=phi_u.dtype) * dy_phi * chi
+        new_phis[name] = phi_n
 
     phi_m_new = new_phis["phi_m"]
     phi_c_new = new_phis["phi_c"]
@@ -392,9 +418,25 @@ def imex_step(
         phi_q_new = phi_q_new + dt * chi * prm.q_to_quartz * G_age
 
     c_before_rim = c_new
+
+    def _rim_uniform(z: Array) -> Array:
+        return (1.0 - geom.ring) * z + geom.ring * jnp.asarray(prm.c0, dtype=z.dtype)
+
+    def _rim_ramp(z: Array) -> Array:
+        c0f = rim_ramp_field(
+            L=geom.L,
+            n=geom.n,
+            c0=prm.c0,
+            rim_alpha=prm.gravity_rim_alpha,
+            dtype=z.dtype,
+        )
+        return (1.0 - geom.ring) * z + geom.ring * c0f
+
     c_new = jax.lax.cond(
         jnp.asarray(prm.dirichlet_active),
-        lambda z: (1.0 - geom.ring) * z + geom.ring * jnp.asarray(prm.c0, dtype=z.dtype),
+        lambda z: jax.lax.cond(
+            jnp.asarray(abs(prm.gravity_rim_alpha) > 1e-20), _rim_ramp, _rim_uniform, z
+        ),
         lambda z: z,
         c_new,
     )

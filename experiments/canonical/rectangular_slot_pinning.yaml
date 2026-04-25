@@ -1,6 +1,6 @@
 experiment:
   name: rectangular_slot_pinning
-  model: agate_ch
+  model: cavity_reactive
   seed: 42
   description: |
     Q1/Q2 baseline on a tilted rectangular slot (same physics as medium_pinning).

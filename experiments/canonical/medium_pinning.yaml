@@ -1,6 +1,6 @@
 experiment:
   name: medium_pinning
-  model: agate_ch
+  model: cavity_reactive
   seed: 42
   description: |
     Q1/Q2 baseline: moderate pinning via γ=4 and slow moganite mobility.

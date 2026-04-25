@@ -1,9 +1,9 @@
 experiment:
-  name: stress_pressure_gradient
+  name: stress_tectonic
   model: cavity_reactive
   seed: 42
   description: |
-    Exploratory: medium_pinning-like physics + pressure-gradient stress (not paper v2 canonical).
+    Canonical card for Anderson-style tectonic far-field stress (Package 3).
 
 geometry:
   type: circular_cavity
@@ -31,10 +31,12 @@ physics:
   phi_m_ratchet_high: 0.5
 
 stress:
-  mode: pressure_gradient
-  sigma_0: 0.5
+  mode: tectonic_far_field
+  S_H: 1.0
+  S_h: 0.4
+  S_V: 0.7
+  theta_SH: 0.5236
   stress_coupling_B: 0.3
-  stress_eps_factor: 3.0
 
 time:
   T: 10000.0
