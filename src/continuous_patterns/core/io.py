@@ -10,7 +10,9 @@ plain dicts until model-specific schemas exist (§2.8).
 from __future__ import annotations
 
 import json
+import logging
 import math
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
@@ -22,6 +24,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from continuous_patterns.core.plotting import plot_fields_final
+
+logger = logging.getLogger(__name__)
 
 _MIGRATION_HINT = (
     "Flat or non-nested configs are not supported. Convert archived YAML to nested "
@@ -214,6 +218,39 @@ class ResultPaths:
 
 _SOLVER_SETTINGS_DEFAULT = Path("experiments/solver_settings.yaml")
 
+_warned_gif_hard_disabled: bool = False
+_warned_h5_hard_disabled: bool = False
+
+
+def _allow_expensive_output() -> bool:
+    """When true, YAML may enable GIF / HDF5 snapshot paths (opt-in)."""
+    v = os.environ.get("CP_ALLOW_EXPENSIVE_OUTPUT", "").strip().lower()
+    return v in ("1", "true", "yes")
+
+
+def _coerce_expensive_output_flags(merged: dict[str, Any]) -> None:
+    """Force ``record_evolution_gif`` / ``save_snapshots_h5`` off unless env allows (in-place)."""
+    global _warned_gif_hard_disabled, _warned_h5_hard_disabled
+    if _allow_expensive_output():
+        return
+    outp = merged.setdefault("output", {})
+    if bool(outp.get("record_evolution_gif")):
+        outp["record_evolution_gif"] = False
+        if not _warned_gif_hard_disabled:
+            logger.warning(
+                "GIF generation hard-disabled by default; "
+                "set CP_ALLOW_EXPENSIVE_OUTPUT=1 to re-enable."
+            )
+            _warned_gif_hard_disabled = True
+    if bool(outp.get("save_snapshots_h5")):
+        outp["save_snapshots_h5"] = False
+        if not _warned_h5_hard_disabled:
+            logger.warning(
+                "HDF5 snapshot writes hard-disabled by default; "
+                "set CP_ALLOW_EXPENSIVE_OUTPUT=1 to re-enable."
+            )
+            _warned_h5_hard_disabled = True
+
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge ``override`` into ``copy(base)``. Override wins on conflicts.
@@ -300,6 +337,7 @@ def load_run_config(
 
     merged = _deep_merge(defaults, user)
     merged = _deep_merge(merged, raw_exp)
+    _coerce_expensive_output_flags(merged)
 
     # Option D (spectral mass drift) is always recorded when supported by the model driver.
     merged.setdefault("output", {})

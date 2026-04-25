@@ -136,6 +136,55 @@ output:
     assert cfg["physics"]["W"] == 1.0
 
 
+def test_expensive_output_hard_disabled_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """YAML GIF/HDF5 toggles are forced off unless CP_ALLOW_EXPENSIVE_OUTPUT=1."""
+    import continuous_patterns.core.io as io_mod
+
+    yaml_body = """
+experiment:
+  name: expensive_flags
+  model: agate_ch
+  seed: 1
+geometry:
+  type: circular_cavity
+  L: 4.0
+  R: 1.5
+  n: 32
+physics:
+  W: 1.0
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+output:
+  save_final_state: true
+  record_evolution_gif: true
+  save_snapshots_h5: true
+"""
+    p = tmp_path / "expensive_flags.yaml"
+    p.write_text(yaml_body, encoding="utf-8")
+
+    io_mod._warned_gif_hard_disabled = False
+    io_mod._warned_h5_hard_disabled = False
+    monkeypatch.delenv("CP_ALLOW_EXPENSIVE_OUTPUT", raising=False)
+    cfg = load_run_config(p)
+    assert cfg["output"]["record_evolution_gif"] is False
+    assert cfg["output"]["save_snapshots_h5"] is False
+
+    io_mod._warned_gif_hard_disabled = False
+    io_mod._warned_h5_hard_disabled = False
+    monkeypatch.setenv("CP_ALLOW_EXPENSIVE_OUTPUT", "1")
+    cfg_allowed = load_run_config(p)
+    assert cfg_allowed["output"]["record_evolution_gif"] is True
+    assert cfg_allowed["output"]["save_snapshots_h5"] is True
+
+
 def test_allocate_run_dir_creates_timestamped_layout(tmp_path: Path) -> None:
     rp = allocate_run_dir(experiment_name="agate_ch", results_root=tmp_path)
     assert rp.root.is_dir()
