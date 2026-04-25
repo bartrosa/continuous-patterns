@@ -162,12 +162,33 @@ def build_sim_params(cfg: dict[str, Any]) -> SimParams:
     dirichlet_active = bool(ph.get("dirichlet_active", True))
 
     phases = _require(ph, "phases", where="physics")
+    tmpl = SimParams()
     phi_m_potential = phase_potential_params_from_spec(
         _require(phases, "moganite", where="physics.phases")
     )
     phi_c_potential = phase_potential_params_from_spec(
         _require(phases, "chalcedony", where="physics.phases")
     )
+    raw_q = phases.get("alpha_quartz")
+    phi_q_potential = (
+        phase_potential_params_from_spec(raw_q) if raw_q is not None else tmpl.phi_q_potential
+    )
+    raw_imp = phases.get("impurity")
+    phi_imp_potential = (
+        phase_potential_params_from_spec(raw_imp) if raw_imp is not None else tmpl.phi_imp_potential
+    )
+
+    aging = ph.get("aging", {})
+    if not isinstance(aging, dict):
+        aging = {}
+    aging_active = bool(aging.get("active", False))
+    k_age = float(aging.get("k_age", 0.0))
+    q_to_quartz = float(aging.get("q_to_quartz", 0.0))
+    if q_to_quartz > 1e-15 and not phi_q_potential.active:
+        raise ValueError(
+            "physics.aging.q_to_quartz > 0 requires an active alpha_quartz phase "
+            "(physics.phases.alpha_quartz with active: true)."
+        )
 
     return SimParams(
         reaction_active=reaction_active,
@@ -175,6 +196,11 @@ def build_sim_params(cfg: dict[str, Any]) -> SimParams:
         D_c=float(_require(ph, "D_c", where="physics")),
         phi_m_potential=phi_m_potential,
         phi_c_potential=phi_c_potential,
+        phi_q_potential=phi_q_potential,
+        phi_imp_potential=phi_imp_potential,
+        aging_active=aging_active,
+        k_age=k_age,
+        q_to_quartz=q_to_quartz,
         gamma=float(_require(ph, "gamma", where="physics")),
         kappa_x=kappa_x,
         kappa_y=kappa_y,
@@ -196,8 +222,8 @@ def build_initial_state(
     geom: Geometry,
     prm: SimParams,
     key: Array,
-) -> tuple[Array, Array, Array]:
-    """``φ_m``, ``φ_c`` random in cavity (``χ``-masked); ``c`` = ``c_sat`` inside, 0 outside.
+) -> tuple[Array, Array, Array, Array, Array]:
+    """``φ`` fields random in cavity (``χ``-masked); ``c`` = ``c_sat`` inside, 0 outside.
 
     Interior ``c = c_sat`` (or ``initial.c_init``) avoids uniform supersaturation at ``t=0``;
     the rim Dirichlet supplies ``c_0`` each step so a diffusive gradient rim→interior can form.
@@ -211,20 +237,26 @@ def build_initial_state(
 
     phi_m0 = float(ic.get("phi_m_init", 0.0))
     phi_c0 = float(ic.get("phi_c_init", 0.0))
+    phi_q0 = float(ic.get("phi_q_init", 0.0))
+    phi_imp0 = float(ic.get("phi_imp_init", 0.0))
     sig_m = float(ic.get("phi_m_noise", 0.01))
     sig_c = float(ic.get("phi_c_noise", 0.01))
+    sig_q = float(ic.get("phi_q_noise", 0.01))
+    sig_imp = float(ic.get("phi_imp_noise", 0.01))
 
-    k1, k2 = jax.random.split(key)
+    k_m, k_c, k_q, k_i, _ = jax.random.split(key, 5)
     chi = geom.chi
-    phi_m = (phi_m0 + sig_m * jax.random.normal(k1, (n, n), dtype=dtype)) * chi
-    phi_c = (phi_c0 + sig_c * jax.random.normal(k2, (n, n), dtype=dtype)) * chi
+    phi_m = (phi_m0 + sig_m * jax.random.normal(k_m, (n, n), dtype=dtype)) * chi
+    phi_c = (phi_c0 + sig_c * jax.random.normal(k_c, (n, n), dtype=dtype)) * chi
+    phi_q = (phi_q0 + sig_q * jax.random.normal(k_q, (n, n), dtype=dtype)) * chi
+    phi_imp = (phi_imp0 + sig_imp * jax.random.normal(k_i, (n, n), dtype=dtype)) * chi
 
     c_sat = float(_require(ph, "c_sat", where="physics"))
     _ = float(_require(ph, "c_0", where="physics"))  # must be present for rim Dirichlet
     c_init_interior = float(ic.get("c_init", c_sat))
     c = c_init_interior * chi
     c = jnp.asarray(c, dtype=dtype)
-    return phi_m, phi_c, c
+    return phi_m, phi_c, phi_q, phi_imp, c
 
 
 def _geometry_bulk_spectral(L: float, n: int, dtype: jnp.dtype) -> Geometry:
@@ -289,6 +321,8 @@ def run_spectral_mass_diagnostic(cfg: dict[str, Any]) -> dict[str, float]:
 
     rho_m = float(prm.phi_m_potential.rho)
     rho_c = float(prm.phi_c_potential.rho)
+    rho_q = float(prm.phi_q_potential.rho)
+    rho_i = float(prm.phi_imp_potential.rho)
 
     dx = L / n
     ii = jnp.arange(n, dtype=dtype)[:, None]
@@ -300,12 +334,13 @@ def run_spectral_mass_diagnostic(cfg: dict[str, Any]) -> dict[str, float]:
     sigma = L / 15.0
     bump = jnp.exp(-((xg - x0) ** 2 + (yg - y0) ** 2) / (2.0 * sigma**2))
     c_ic = jnp.asarray(0.5, dtype=dtype) * bump
-    phi_m = jnp.zeros((n, n), dtype=dtype)
-    phi_c = jnp.zeros((n, n), dtype=dtype)
-    state = (phi_m, phi_c, c_ic)
+    zf = jnp.zeros((n, n), dtype=dtype)
+    phi_m = zf
+    phi_c = zf
+    state = (phi_m, phi_c, zf, zf, c_ic)
 
-    def _total_mass(s: tuple[Array, Array, Array]) -> float:
-        pm, pc, cc = s
+    def _total_mass(s: tuple[Array, Array, Array, Array, Array]) -> float:
+        pm, pc, pq, pim, cc = s
         ch = np.asarray(jax.device_get(geom.chi))
         return float(
             np.sum(
@@ -314,6 +349,8 @@ def run_spectral_mass_diagnostic(cfg: dict[str, Any]) -> dict[str, float]:
                     np.asarray(jax.device_get(cc))
                     + rho_m * np.asarray(jax.device_get(pm))
                     + rho_c * np.asarray(jax.device_get(pc))
+                    + rho_q * np.asarray(jax.device_get(pq))
+                    + rho_i * np.asarray(jax.device_get(pim))
                 )
             )
             * dx
@@ -335,7 +372,7 @@ def run_spectral_mass_diagnostic(cfg: dict[str, Any]) -> dict[str, float]:
 
 
 def _append_flux_sample(
-    state: tuple[Array, Array, Array],
+    state: tuple[Array, Array, Array, Array, Array],
     geom: Geometry,
     flux: dict[str, list[float]],
     *,
@@ -344,9 +381,11 @@ def _append_flux_sample(
     D_c: float,
 ) -> None:
     """v1-style flux samples: bilinear circle means + ``2·dx`` central difference for ``∂c/∂r``."""
-    phi_m, phi_c, c = state
+    phi_m, phi_c, phi_q, phi_imp, c = state
     pm = np.asarray(phi_m)
     pc = np.asarray(phi_c)
+    pq = np.asarray(phi_q)
+    pim = np.asarray(phi_imp)
     cc = np.asarray(c)
     L = float(geom.L)
     R = float(geom.R)
@@ -362,7 +401,7 @@ def _append_flux_sample(
     flux_rate = float(D_c) * dc_dr * perimeter
 
     m_dissolved = dissolved_mass_disk_numpy(cc, L=L, r_disk=r_fix)
-    phi_sum = pm + pc
+    phi_sum = pm + pc + pq + pim
     phi_pack = azimuthal_mean_at_radius_numpy(phi_sum, L=L, r_abs=r_fix)
 
     flux["times"].append(float(t))
@@ -463,14 +502,15 @@ def _compute_surface_flux_balance(
 
 
 def _assemble_diagnostics(
-    state: tuple[Array, Array, Array],
+    state: tuple[Array, Array, Array, Array, Array],
     geom: Geometry,
     prm: SimParams,
     meta: dict[str, Any],
 ) -> dict[str, Any]:
     pm = np.asarray(state[0])
     pc = np.asarray(state[1])
-    cc = np.asarray(state[2])
+    pq = np.asarray(state[2])
+    cc = np.asarray(state[4])
     chi = np.asarray(geom.chi)
     dx = float(geom.dx)
     L = float(geom.L)
@@ -487,6 +527,7 @@ def _assemble_diagnostics(
             rho_c=float(prm.phi_c_potential.rho),
             dx=dx,
         ),
+        "phi_q_chi_weighted_integral": float(np.sum(chi * pq) * dx * dx),
         "jab_canonical": jab_metrics_canonical_slice(pm, pc, L=L, R=R),
         "bands_multislice": count_bands_multislice(pm, pc, L=L, R=R),
         "psi_fft_anisotropy": fft_psi_anisotropy_ratio(pm, pc, L=L, cavity_R=R),
@@ -525,7 +566,7 @@ def _assemble_diagnostics(
 
 
 def _append_host_fields_snapshot(
-    state: tuple[Array, Array, Array],
+    state: tuple[Array, Array, Array, Array, Array],
     *,
     step: int,
     t: float,
@@ -534,10 +575,12 @@ def _append_host_fields_snapshot(
     h5_list: list[dict[str, Any]] | None,
     gif_list: list[tuple[float, np.ndarray]] | None,
 ) -> None:
-    """Copy ``(phi_m, phi_c, c)`` to host for HDF5 and/or GIF lists."""
+    """Copy field tuple to host for HDF5 and/or GIF lists."""
     pm = np.asarray(jax.device_get(state[0]), dtype=np.float32)
     pc = np.asarray(jax.device_get(state[1]), dtype=np.float32)
-    cc = np.asarray(jax.device_get(state[2]), dtype=np.float32)
+    pq = np.asarray(jax.device_get(state[2]), dtype=np.float32)
+    pim = np.asarray(jax.device_get(state[3]), dtype=np.float32)
+    cc = np.asarray(jax.device_get(state[4]), dtype=np.float32)
     if save_h5 and h5_list is not None:
         h5_list.append(
             {
@@ -545,6 +588,8 @@ def _append_host_fields_snapshot(
                 "t": float(t),
                 "phi_m": pm.copy(),
                 "phi_c": pc.copy(),
+                "phi_q": pq.copy(),
+                "phi_imp": pim.copy(),
                 "c": cc.copy(),
             }
         )
@@ -593,11 +638,19 @@ def simulate(
     dx_np = float(geom.dx)
     pm0 = np.asarray(jax.device_get(state[0]))
     pc0 = np.asarray(jax.device_get(state[1]))
-    c0_arr = np.asarray(jax.device_get(state[2]))
+    pq0 = np.asarray(jax.device_get(state[2]))
+    pim0 = np.asarray(jax.device_get(state[3]))
+    c0_arr = np.asarray(jax.device_get(state[4]))
     m_total_initial = float(
         np.sum(
             chi_np
-            * (c0_arr + float(prm.phi_m_potential.rho) * pm0 + float(prm.phi_c_potential.rho) * pc0)
+            * (
+                c0_arr
+                + float(prm.phi_m_potential.rho) * pm0
+                + float(prm.phi_c_potential.rho) * pc0
+                + float(prm.phi_q_potential.rho) * pq0
+                + float(prm.phi_imp_potential.rho) * pim0
+            )
         )
         * dx_np
         * dx_np
@@ -755,11 +808,19 @@ def simulate(
     )
     pm_f = np.asarray(jax.device_get(state[0]))
     pc_f = np.asarray(jax.device_get(state[1]))
-    c_f = np.asarray(jax.device_get(state[2]))
+    pq_f = np.asarray(jax.device_get(state[2]))
+    pim_f = np.asarray(jax.device_get(state[3]))
+    c_f = np.asarray(jax.device_get(state[4]))
     m_total_final = float(
         np.sum(
             chi_np
-            * (c_f + float(prm.phi_m_potential.rho) * pm_f + float(prm.phi_c_potential.rho) * pc_f)
+            * (
+                c_f
+                + float(prm.phi_m_potential.rho) * pm_f
+                + float(prm.phi_c_potential.rho) * pc_f
+                + float(prm.phi_q_potential.rho) * pq_f
+                + float(prm.phi_imp_potential.rho) * pim_f
+            )
         )
         * dx_np
         * dx_np
@@ -774,7 +835,14 @@ def simulate(
         except Exception as exc:
             logger.warning("spectral mass diagnostic failed: %s", exc)
 
-    state_final = SimState(phi_m=state[0], phi_c=state[1], c=state[2], t=t_final)
+    state_final = SimState(
+        phi_m=state[0],
+        phi_c=state[1],
+        phi_q=state[2],
+        phi_imp=state[3],
+        c=state[4],
+        t=t_final,
+    )
     diagnostics = _assemble_diagnostics(state, geom, prm, meta)
     return SimResult(
         state_final=state_final,

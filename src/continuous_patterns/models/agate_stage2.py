@@ -153,12 +153,33 @@ def build_sim_params(cfg: dict[str, Any]) -> SimParams:
         raise KeyError("physics must include lambda_bar (or legacy alias lambda_barrier)")
 
     phases = _require(ph, "phases", where="physics")
+    tmpl = SimParams()
     phi_m_potential = phase_potential_params_from_spec(
         _require(phases, "moganite", where="physics.phases")
     )
     phi_c_potential = phase_potential_params_from_spec(
         _require(phases, "chalcedony", where="physics.phases")
     )
+    raw_q = phases.get("alpha_quartz")
+    phi_q_potential = (
+        phase_potential_params_from_spec(raw_q) if raw_q is not None else tmpl.phi_q_potential
+    )
+    raw_imp = phases.get("impurity")
+    phi_imp_potential = (
+        phase_potential_params_from_spec(raw_imp) if raw_imp is not None else tmpl.phi_imp_potential
+    )
+
+    aging = ph.get("aging", {})
+    if not isinstance(aging, dict):
+        aging = {}
+    aging_active = bool(aging.get("active", False))
+    k_age = float(aging.get("k_age", 0.0))
+    q_to_quartz = float(aging.get("q_to_quartz", 0.0))
+    if q_to_quartz > 1e-15 and not phi_q_potential.active:
+        raise ValueError(
+            "physics.aging.q_to_quartz > 0 requires an active alpha_quartz phase "
+            "(physics.phases.alpha_quartz with active: true)."
+        )
 
     return SimParams(
         reaction_active=False,
@@ -166,6 +187,11 @@ def build_sim_params(cfg: dict[str, Any]) -> SimParams:
         D_c=float(_require(ph, "D_c", where="physics")),
         phi_m_potential=phi_m_potential,
         phi_c_potential=phi_c_potential,
+        phi_q_potential=phi_q_potential,
+        phi_imp_potential=phi_imp_potential,
+        aging_active=aging_active,
+        k_age=k_age,
+        q_to_quartz=q_to_quartz,
         gamma=float(_require(ph, "gamma", where="physics")),
         kappa_x=kappa_x,
         kappa_y=kappa_y,
@@ -204,20 +230,26 @@ def build_initial_state(
 
     phi_m0 = float(ic.get("phi_m_init", 0.5))
     phi_c0 = float(ic.get("phi_c_init", 0.5))
+    phi_q0 = float(ic.get("phi_q_init", 0.0))
+    phi_imp0 = float(ic.get("phi_imp_init", 0.0))
     sig_m = float(ic.get("phi_m_noise", 0.01))
     sig_c = float(ic.get("phi_c_noise", 0.01))
+    sig_q = float(ic.get("phi_q_noise", 0.01))
+    sig_imp = float(ic.get("phi_imp_noise", 0.01))
 
-    k1, k2 = jax.random.split(key)
-    phi_m = phi_m0 + sig_m * jax.random.normal(k1, (n, n), dtype=dtype)
-    phi_c = phi_c0 + sig_c * jax.random.normal(k2, (n, n), dtype=dtype)
+    k_m, k_c, k_q, k_i, _ = jax.random.split(key, 5)
+    phi_m = phi_m0 + sig_m * jax.random.normal(k_m, (n, n), dtype=dtype)
+    phi_c = phi_c0 + sig_c * jax.random.normal(k_c, (n, n), dtype=dtype)
+    phi_q = phi_q0 + sig_q * jax.random.normal(k_q, (n, n), dtype=dtype)
+    phi_imp = phi_imp0 + sig_imp * jax.random.normal(k_i, (n, n), dtype=dtype)
     c0 = float(ic.get("c_init", ph.get("c_0", 0.0)))
     c = jnp.full((n, n), c0, dtype=dtype)
-    return SimState(phi_m=phi_m, phi_c=phi_c, c=c, t=0.0)
+    return SimState(phi_m=phi_m, phi_c=phi_c, phi_q=phi_q, phi_imp=phi_imp, c=c, t=0.0)
 
 
 def _append_snapshot_bulk(
     meta_snapshots: list[dict[str, Any]],
-    state: tuple[Array, Array, Array],
+    state: tuple[Array, Array, Array, Array, Array],
     *,
     step: int,
     t: float,
@@ -229,7 +261,7 @@ def _append_snapshot_bulk(
 
 
 def _assemble_diagnostics_s2(
-    state: tuple[Array, Array, Array],
+    state: tuple[Array, Array, Array, Array, Array],
     geom: Geometry,
     prm: SimParams,
     meta: dict[str, Any],
@@ -299,17 +331,25 @@ def simulate(
     key = jax.random.PRNGKey(seed)
     key, k_ic = jax.random.split(key)
     ic = build_initial_state(cfg, geom, prm, k_ic)
-    state = (ic.phi_m, ic.phi_c, ic.c)
+    state = (ic.phi_m, ic.phi_c, ic.phi_q, ic.phi_imp, ic.c)
 
     chi_np = np.asarray(jax.device_get(geom.chi))
     dx_np = float(geom.dx)
     pm0 = np.asarray(jax.device_get(state[0]))
     pc0 = np.asarray(jax.device_get(state[1]))
-    c0_arr = np.asarray(jax.device_get(state[2]))
+    pq0 = np.asarray(jax.device_get(state[2]))
+    pim0 = np.asarray(jax.device_get(state[3]))
+    c0_arr = np.asarray(jax.device_get(state[4]))
     m_total_initial = float(
         np.sum(
             chi_np
-            * (c0_arr + float(prm.phi_m_potential.rho) * pm0 + float(prm.phi_c_potential.rho) * pc0)
+            * (
+                c0_arr
+                + float(prm.phi_m_potential.rho) * pm0
+                + float(prm.phi_c_potential.rho) * pc0
+                + float(prm.phi_q_potential.rho) * pq0
+                + float(prm.phi_imp_potential.rho) * pim0
+            )
         )
         * dx_np
         * dx_np
@@ -455,11 +495,19 @@ def simulate(
     )
     pm_f = np.asarray(jax.device_get(state[0]))
     pc_f = np.asarray(jax.device_get(state[1]))
-    c_f = np.asarray(jax.device_get(state[2]))
+    pq_f = np.asarray(jax.device_get(state[2]))
+    pim_f = np.asarray(jax.device_get(state[3]))
+    c_f = np.asarray(jax.device_get(state[4]))
     m_total_final = float(
         np.sum(
             chi_np
-            * (c_f + float(prm.phi_m_potential.rho) * pm_f + float(prm.phi_c_potential.rho) * pc_f)
+            * (
+                c_f
+                + float(prm.phi_m_potential.rho) * pm_f
+                + float(prm.phi_c_potential.rho) * pc_f
+                + float(prm.phi_q_potential.rho) * pq_f
+                + float(prm.phi_imp_potential.rho) * pim_f
+            )
         )
         * dx_np
         * dx_np
@@ -467,7 +515,14 @@ def simulate(
     meta["M_total_final"] = m_total_final
     meta["cumulative_dirichlet_injection"] = cumulative_injection
 
-    state_final = SimState(phi_m=state[0], phi_c=state[1], c=state[2], t=t_final)
+    state_final = SimState(
+        phi_m=state[0],
+        phi_c=state[1],
+        phi_q=state[2],
+        phi_imp=state[3],
+        c=state[4],
+        t=t_final,
+    )
     diagnostics = _assemble_diagnostics_s2(state, geom, prm, meta)
     return SimResult(
         state_final=state_final,

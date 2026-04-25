@@ -31,6 +31,14 @@ See [ARCHITECTURE.md §2.8](ARCHITECTURE.md). In short:
 3. Extend `GeometrySpec.type` in `core/io.py`.
 4. Template YAML under `experiments/canonical/`.
 
+### New solid phase (beyond moganite / chalcedony)
+
+1. Extend ``PhasesSpec`` / YAML under ``physics.phases`` (optional keys mirror ``alpha_quartz`` / ``impurity``).
+2. Add matching defaults on ``SimParams`` (``phi_q_potential``, ``phi_imp_potential``) in ``core/imex.py`` if the new slot needs non-trivial defaults.
+3. Ensure ``models.*.build_sim_params`` maps YAML → ``PhasePotentialParams`` (``phase_potential_params_from_spec`` pattern).
+4. If the phase participates in ψ-stress, set ``psi_sign``; use ``active: false`` for placeholders.
+5. Update ``save_final_state_npz`` / snapshot writers if the field must appear in artifacts.
+
 ### New bulk phase potential (Cahn–Hilliard driving force)
 
 1. Add ``def my_potential_prime(phi: Array, *, …) -> Array`` in ``core/potentials.py`` (same contract as existing ``*_prime`` helpers: returns ``∂f/∂φ``, shape/dtype match ``phi``).

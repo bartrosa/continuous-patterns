@@ -70,12 +70,18 @@ The implementation adds $\delta\mu_m^{\mathrm{stress}}$, $\delta\mu_c^{\mathrm{s
 **Precipitation rate** (implemented form):
 
 $$
-G(c,\phi_m,\phi_c) = k_{\mathrm{rxn}}\,\max(c - c_{\mathrm{sat}}, 0)\,\max(1 - \phi_m - \phi_c, 0).
+G(c,\{\phi_\alpha\}) = k_{\mathrm{rxn}}\,\max(c - c_{\mathrm{sat}}, 0)\,\max(1 - \textstyle\sum_\alpha \phi_\alpha,\, 0),
 $$
 
-The factor $\max(c - c_{\mathrm{sat}}, 0)$ is a **first-order, undersaturation-limited precipitation rate** of the kind used in **reactive transport** models: reaction turns on only when the solution is locally supersaturated relative to a chosen solubility $c_{\mathrm{sat}}$. The complementary factor $\max(1 - \phi_m - \phi_c, 0)$ is a **packing ceiling** — a **numerical / phenomenological device** to prevent $\phi_m + \phi_c$ from exceeding full packing in the reaction channel; it is **not** derived from a detailed surface-nucleation law. Throughout, **temperature and pressure** are treated as **fixed**; any thermal or pressure dependence is absorbed into the constants $k_{\mathrm{rxn}}$ and $c_{\mathrm{sat}}$ (**isothermal, isobaric** effective medium).
+where the sum runs over **all** solid phase fields tracked in the IMEX step (moganite, chalcedony, optional α-quartz, optional impurity placeholder). The factor $\max(c - c_{\mathrm{sat}}, 0)$ is a **first-order, supersaturation-gated precipitation rate** of the kind used in **reactive transport** models. The complementary packing factor is a **numerical / phenomenological device**; it is **not** derived from a detailed surface-nucleation law. Throughout, **temperature and pressure** are treated as **fixed**; any thermal or pressure dependence is absorbed into the constants $k_{\mathrm{rxn}}$ and $c_{\mathrm{sat}}$ (**isothermal, isobaric** effective medium).
 
-So precipitation only occurs in supersaturated regions and only while total solid fraction $\phi_m + \phi_c$ has not saturated the local packing (hard ceiling at $1$ in the $G$ factor).
+**Ostwald channel:** the partition $(\psi_m,\psi_c)$ still uses **pre-step** $(c,\phi_m)$ and the same ratchet as before; **α-quartz is not fed by $G$** (only by optional **aging**, below).
+
+So precipitation only occurs in supersaturated regions and only while the **total** solid packing tracked in $G$ has not saturated the local ceiling at $1$.
+
+**Aging (optional):** when enabled, an explicit kinetic term
+$G_{\mathrm{age}} = k_{\mathrm{age}}\,\phi_m\,\max(c_{\mathrm{sat}} - c,\, 0)$
+reduces $\phi_m$ and increases $\phi_c$ and (optionally) $\phi_q$ with fractions $(1 - q_{\mathrm{quartz}})$ and $q_{\mathrm{quartz}}$. This conserves silica in the solid sum $(\rho_m\phi_m + \rho_c\phi_c + \rho_q\phi_q)$ when $\rho_\alpha \equiv 1$; **$c$ is not sourced** by aging. The split is gated in YAML so that $q_{\mathrm{quartz}} > 0$ requires an **active** α-quartz phase block.
 
 **Base Ostwald factors** (smooth sigmoid in $c$):
 

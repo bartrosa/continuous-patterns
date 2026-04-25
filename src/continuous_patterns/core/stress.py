@@ -195,6 +195,19 @@ def stress_mu_hat(
     return jnp.fft.fft2(mu)
 
 
+def mu_stress_real(
+    psi: ArrayLike,
+    sigma_xx: ArrayLike,
+    sigma_xy: ArrayLike,
+    sigma_yy: ArrayLike,
+    kx_wave: ArrayLike,
+    ky_wave: ArrayLike,
+    B: float | ArrayLike,
+) -> Array:
+    """Real-space ``μ_stress = -B ∇·(σ ∇ψ)`` for a prescribed ``ψ`` field (PHYSICS §5)."""
+    return _mu_stress_real(psi, sigma_xx, sigma_xy, sigma_yy, kx_wave, ky_wave, B)
+
+
 def stress_contribution_to_mu(
     phi_m: ArrayLike,
     phi_c: ArrayLike,
@@ -205,8 +218,12 @@ def stress_contribution_to_mu(
     ky_wave: ArrayLike,
     B: float | ArrayLike,
 ) -> tuple[Array, Array]:
-    """Return ``(δμ_m, δμ_c)`` in real space with ``±½`` ψ-split (PHYSICS §5)."""
+    """Return ``(δμ_m, δμ_c)`` in real space with ``±½`` ψ-split (PHYSICS §5).
+
+    Legacy helper: ``ψ = φ_m - φ_c``. Prefer :func:`mu_stress_real` plus per-phase
+    ``½·(ψ_sign_α)·μ_stress`` when more than two order parameters contribute to ``ψ``.
+    """
     psi = jnp.asarray(phi_m) - jnp.asarray(phi_c)
-    mu = _mu_stress_real(psi, sigma_xx, sigma_xy, sigma_yy, kx_wave, ky_wave, B)
+    mu = mu_stress_real(psi, sigma_xx, sigma_xy, sigma_yy, kx_wave, ky_wave, B)
     half = jnp.asarray(0.5, dtype=mu.dtype)
     return half * mu, -half * mu

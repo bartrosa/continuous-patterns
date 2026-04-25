@@ -119,11 +119,15 @@ All remaining shared knobs ($\gamma$, $\kappa_x$, $\kappa_y$, `lambda_bar`, `str
 class SimState:
     """Instantaneous fields on the grid."""
 
-    phi_m: jax.Array  # (n, n)
-    phi_c: jax.Array  # (n, n)
-    c: jax.Array      # (n, n)
-    t: float          # physical time
+    phi_m: jax.Array   # (n, n)
+    phi_c: jax.Array   # (n, n)
+    phi_q: jax.Array   # (n, n) — α-quartz; zero when inactive
+    phi_imp: jax.Array # (n, n) — impurity placeholder
+    c: jax.Array       # (n, n)
+    t: float           # physical time
 ```
+
+**IMEX state tuple:** ``imex_step`` advances ``(φ_m, φ_c, φ_q, φ_\mathrm{imp}, c)``. ψ-stress uses ``ψ = Σ_α (\mathrm{psi\_sign}_α\, φ_α)`` over **active** phases; default ``(+, -, 0, 0)`` reproduces ``ψ = φ_m - φ_c``. Optional **aging** reads ``physics.aging`` in YAML (see ``docs/PHYSICS.md`` §3).
 
 ### 2.5 `SimResult`
 

@@ -131,6 +131,8 @@ def run_one(
                 phi_m=np.asarray(result.state_final.phi_m),
                 phi_c=np.asarray(result.state_final.phi_c),
                 c=np.asarray(result.state_final.c),
+                phi_q=np.asarray(result.state_final.phi_q),
+                phi_imp=np.asarray(result.state_final.phi_imp),
                 chi=None,
             )
             gcfg = cfg["geometry"]

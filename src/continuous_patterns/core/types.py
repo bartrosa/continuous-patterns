@@ -36,6 +36,8 @@ class SimState:
 
     phi_m: Array
     phi_c: Array
+    phi_q: Array
+    phi_imp: Array
     c: Array
     t: float
 

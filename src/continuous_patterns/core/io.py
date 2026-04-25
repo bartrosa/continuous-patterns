@@ -91,15 +91,28 @@ class PhaseSpec(BaseModel):
     mobility: float = 1.0
     rho: float = 1.0
     psi_sign: float = 0.0
+    active: bool = True
 
 
 class PhasesSpec(BaseModel):
-    """Required Stage I/II pair (moganite + chalcedony); see ``docs/ARCHITECTURE.md``."""
+    """Moganite + chalcedony required; optional α-quartz and impurity placeholders."""
 
     model_config = ConfigDict(extra="forbid")
 
     moganite: PhaseSpec
     chalcedony: PhaseSpec
+    alpha_quartz: PhaseSpec | None = None
+    impurity: PhaseSpec | None = None
+
+
+class AgingSpec(BaseModel):
+    """Optional kinetic aging of moganite toward chalcedony / α-quartz."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    active: bool = False
+    k_age: float = Field(default=0.0, ge=0.0)
+    q_to_quartz: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 def apply_physics_phases_legacy_shim(physics: dict[str, Any]) -> None:
@@ -173,11 +186,16 @@ class RunConfigValidated(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _validate_physics_phases(self) -> Self:
-        phases = self.physics.get("phases")
+    def _normalize_physics_subdicts(self) -> Self:
+        phys = self.physics
+        phases = phys.get("phases")
         if phases is not None:
-            validated = PhasesSpec.model_validate(phases)
-            self.physics["phases"] = validated.model_dump(mode="python")
+            phys["phases"] = PhasesSpec.model_validate(phases).model_dump(mode="python")
+        ag = phys.get("aging")
+        if ag is not None:
+            phys["aging"] = AgingSpec.model_validate(ag).model_dump(mode="python")
+        else:
+            phys["aging"] = AgingSpec().model_dump(mode="python")
         return self
 
 
@@ -349,7 +367,9 @@ def save_snapshots_h5(
             g = h5.create_group(f"snap_{idx:05d}")
             g.attrs["step"] = int(snap["step"])
             g.attrs["t"] = float(snap["t"])
-            for field in ("phi_m", "phi_c", "c"):
+            for field in ("phi_m", "phi_c", "phi_q", "phi_imp", "c"):
+                if field not in snap:
+                    continue
                 arr = np.asarray(snap[field], dtype=np.float32)
                 g.create_dataset(
                     field,
@@ -374,15 +394,18 @@ def load_snapshots_h5(path: Path | str) -> list[dict[str, Any]]:
         n = int(h5["meta"].attrs.get("n_snapshots", 0))
         for idx in range(n):
             g = h5[f"snap_{idx:05d}"]
-            out.append(
-                {
-                    "step": int(g.attrs["step"]),
-                    "t": float(g.attrs["t"]),
-                    "phi_m": np.asarray(g["phi_m"]),
-                    "phi_c": np.asarray(g["phi_c"]),
-                    "c": np.asarray(g["c"]),
-                }
-            )
+            row: dict[str, Any] = {
+                "step": int(g.attrs["step"]),
+                "t": float(g.attrs["t"]),
+                "phi_m": np.asarray(g["phi_m"]),
+                "phi_c": np.asarray(g["phi_c"]),
+                "c": np.asarray(g["c"]),
+            }
+            if "phi_q" in g:
+                row["phi_q"] = np.asarray(g["phi_q"])
+            if "phi_imp" in g:
+                row["phi_imp"] = np.asarray(g["phi_imp"])
+            out.append(row)
     return out
 
 
@@ -427,6 +450,8 @@ def save_final_state_npz(
     phi_m: np.ndarray,
     phi_c: np.ndarray,
     c: np.ndarray,
+    phi_q: np.ndarray | None = None,
+    phi_imp: np.ndarray | None = None,
     chi: np.ndarray | None = None,
 ) -> None:
     """Write compressed ``final_state.npz`` with NumPy arrays."""
@@ -435,6 +460,10 @@ def save_final_state_npz(
         "phi_c": np.asarray(phi_c),
         "c": np.asarray(c),
     }
+    if phi_q is not None:
+        data["phi_q"] = np.asarray(phi_q)
+    if phi_imp is not None:
+        data["phi_imp"] = np.asarray(phi_imp)
     if chi is not None:
         data["chi"] = np.asarray(chi)
     np.savez_compressed(path, **data)
