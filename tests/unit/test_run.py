@@ -138,7 +138,7 @@ def test_templates_load_successfully() -> None:
     """Shipped canonical YAMLs under ``experiments/canonical/`` pass ``load_run_config``."""
     assert _TEMPLATES_DIR.is_dir()
     templates = sorted(_TEMPLATES_DIR.glob("*.yaml"))
-    assert len(templates) == 9
+    assert len(templates) == 13
     for tmpl in templates:
         cfg = load_run_config(tmpl)
         assert cfg["experiment"]["model"] in ("agate_ch", "agate_stage2")

@@ -144,13 +144,16 @@ def run_one(
             if include_panel:
                 params_for_panel = dict(cfg)
                 params_for_panel["_diagnostics"] = {**result.diagnostics, "wall_time_s": wall_s}
+            meta = result.meta if isinstance(result.meta, dict) else {}
+            meta_r = meta.get("effective_cavity_R")
+            cavity_r = float(meta_r) if meta_r is not None else float(gcfg.get("R", 0.0))
             write_figures_final(
                 paths.root,
                 phi_m=np.asarray(result.state_final.phi_m),
                 phi_c=np.asarray(result.state_final.phi_c),
                 c=np.asarray(result.state_final.c),
                 L=float(gcfg["L"]),
-                R=float(gcfg.get("R", 0.0)),
+                R=cavity_r,
                 title=fig_title,
                 params=params_for_panel,
                 include_params_panel=include_panel,
