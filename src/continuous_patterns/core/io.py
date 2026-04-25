@@ -10,18 +10,22 @@ plain dicts until model-specific schemas exist (§2.8).
 from __future__ import annotations
 
 import json
+import logging
 import math
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 import numpy as np
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from continuous_patterns.core.plotting import plot_fields_final
+
+logger = logging.getLogger(__name__)
 
 _MIGRATION_HINT = (
     "Flat or non-nested configs are not supported. Convert archived YAML to nested "
@@ -81,6 +85,68 @@ class TimeSpec(BaseModel):
     snapshot_every: int = Field(default=500, ge=1)
 
 
+class PhaseSpec(BaseModel):
+    """One crystalline phase: bulk potential dispatch + CH mobility / bookkeeping."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    potential: Literal["double_well", "tilted_well", "asymmetric_well", "zero"] = "double_well"
+    potential_kwargs: dict[str, float] = Field(default_factory=dict)
+    mobility: float = 1.0
+    rho: float = 1.0
+    psi_sign: float = 0.0
+    active: bool = True
+
+
+class PhasesSpec(BaseModel):
+    """Moganite + chalcedony required; optional α-quartz and impurity placeholders."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    moganite: PhaseSpec
+    chalcedony: PhaseSpec
+    alpha_quartz: PhaseSpec | None = None
+    impurity: PhaseSpec | None = None
+
+
+class AgingSpec(BaseModel):
+    """Optional kinetic aging of moganite toward chalcedony / α-quartz."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    active: bool = False
+    k_age: float = Field(default=0.0, ge=0.0)
+    q_to_quartz: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+def apply_physics_phases_legacy_shim(physics: dict[str, Any]) -> None:
+    """Inject ``physics['phases']`` from legacy flat keys when ``phases`` is absent (in-place).
+
+    Legacy shim (potential dispatch refactor, Step 1): if ``physics.phases`` is
+    missing, build it from optional ``W``, ``M_m``, ``M_c``, ``rho_m``,
+    ``rho_c`` so existing canonical YAMLs stay unchanged. Same mapping as
+    ``RunConfigValidated`` ``mode='before'`` validator.
+    """
+    if "phases" in physics:
+        return
+    physics["phases"] = {
+        "moganite": {
+            "potential": "double_well",
+            "potential_kwargs": {"W": float(physics.get("W", 1.0))},
+            "mobility": float(physics.get("M_m", 1.0)),
+            "rho": float(physics.get("rho_m", 1.0)),
+            "psi_sign": 1.0,
+        },
+        "chalcedony": {
+            "potential": "double_well",
+            "potential_kwargs": {"W": float(physics.get("W", 1.0))},
+            "mobility": float(physics.get("M_c", 1.0)),
+            "rho": float(physics.get("rho_c", 1.0)),
+            "psi_sign": -1.0,
+        },
+    }
+
+
 class OutputSpec(BaseModel):
     """Output toggles (extensible for future diagnostics keys)."""
 
@@ -111,6 +177,31 @@ class RunConfigValidated(BaseModel):
     output: OutputSpec = Field(default_factory=OutputSpec)
     initial: dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_physics_phases_legacy(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            phys = data.get("physics")
+            if phys is None:
+                data["physics"] = {}
+                phys = data["physics"]
+            if isinstance(phys, dict):
+                apply_physics_phases_legacy_shim(phys)
+        return data
+
+    @model_validator(mode="after")
+    def _normalize_physics_subdicts(self) -> Self:
+        phys = self.physics
+        phases = phys.get("phases")
+        if phases is not None:
+            phys["phases"] = PhasesSpec.model_validate(phases).model_dump(mode="python")
+        ag = phys.get("aging")
+        if ag is not None:
+            phys["aging"] = AgingSpec.model_validate(ag).model_dump(mode="python")
+        else:
+            phys["aging"] = AgingSpec().model_dump(mode="python")
+        return self
+
 
 @dataclass(frozen=True)
 class ResultPaths:
@@ -126,6 +217,39 @@ class ResultPaths:
 
 
 _SOLVER_SETTINGS_DEFAULT = Path("experiments/solver_settings.yaml")
+
+_warned_gif_hard_disabled: bool = False
+_warned_h5_hard_disabled: bool = False
+
+
+def _allow_expensive_output() -> bool:
+    """When true, YAML may enable GIF / HDF5 snapshot paths (opt-in)."""
+    v = os.environ.get("CP_ALLOW_EXPENSIVE_OUTPUT", "").strip().lower()
+    return v in ("1", "true", "yes")
+
+
+def _coerce_expensive_output_flags(merged: dict[str, Any]) -> None:
+    """Force ``record_evolution_gif`` / ``save_snapshots_h5`` off unless env allows (in-place)."""
+    global _warned_gif_hard_disabled, _warned_h5_hard_disabled
+    if _allow_expensive_output():
+        return
+    outp = merged.setdefault("output", {})
+    if bool(outp.get("record_evolution_gif")):
+        outp["record_evolution_gif"] = False
+        if not _warned_gif_hard_disabled:
+            logger.warning(
+                "GIF generation hard-disabled by default; "
+                "set CP_ALLOW_EXPENSIVE_OUTPUT=1 to re-enable."
+            )
+            _warned_gif_hard_disabled = True
+    if bool(outp.get("save_snapshots_h5")):
+        outp["save_snapshots_h5"] = False
+        if not _warned_h5_hard_disabled:
+            logger.warning(
+                "HDF5 snapshot writes hard-disabled by default; "
+                "set CP_ALLOW_EXPENSIVE_OUTPUT=1 to re-enable."
+            )
+            _warned_h5_hard_disabled = True
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -213,6 +337,7 @@ def load_run_config(
 
     merged = _deep_merge(defaults, user)
     merged = _deep_merge(merged, raw_exp)
+    _coerce_expensive_output_flags(merged)
 
     # Option D (spectral mass drift) is always recorded when supported by the model driver.
     merged.setdefault("output", {})
@@ -280,7 +405,9 @@ def save_snapshots_h5(
             g = h5.create_group(f"snap_{idx:05d}")
             g.attrs["step"] = int(snap["step"])
             g.attrs["t"] = float(snap["t"])
-            for field in ("phi_m", "phi_c", "c"):
+            for field in ("phi_m", "phi_c", "phi_q", "phi_imp", "c"):
+                if field not in snap:
+                    continue
                 arr = np.asarray(snap[field], dtype=np.float32)
                 g.create_dataset(
                     field,
@@ -305,15 +432,18 @@ def load_snapshots_h5(path: Path | str) -> list[dict[str, Any]]:
         n = int(h5["meta"].attrs.get("n_snapshots", 0))
         for idx in range(n):
             g = h5[f"snap_{idx:05d}"]
-            out.append(
-                {
-                    "step": int(g.attrs["step"]),
-                    "t": float(g.attrs["t"]),
-                    "phi_m": np.asarray(g["phi_m"]),
-                    "phi_c": np.asarray(g["phi_c"]),
-                    "c": np.asarray(g["c"]),
-                }
-            )
+            row: dict[str, Any] = {
+                "step": int(g.attrs["step"]),
+                "t": float(g.attrs["t"]),
+                "phi_m": np.asarray(g["phi_m"]),
+                "phi_c": np.asarray(g["phi_c"]),
+                "c": np.asarray(g["c"]),
+            }
+            if "phi_q" in g:
+                row["phi_q"] = np.asarray(g["phi_q"])
+            if "phi_imp" in g:
+                row["phi_imp"] = np.asarray(g["phi_imp"])
+            out.append(row)
     return out
 
 
@@ -358,6 +488,8 @@ def save_final_state_npz(
     phi_m: np.ndarray,
     phi_c: np.ndarray,
     c: np.ndarray,
+    phi_q: np.ndarray | None = None,
+    phi_imp: np.ndarray | None = None,
     chi: np.ndarray | None = None,
 ) -> None:
     """Write compressed ``final_state.npz`` with NumPy arrays."""
@@ -366,6 +498,10 @@ def save_final_state_npz(
         "phi_c": np.asarray(phi_c),
         "c": np.asarray(c),
     }
+    if phi_q is not None:
+        data["phi_q"] = np.asarray(phi_q)
+    if phi_imp is not None:
+        data["phi_imp"] = np.asarray(phi_imp)
     if chi is not None:
         data["chi"] = np.asarray(chi)
     np.savez_compressed(path, **data)

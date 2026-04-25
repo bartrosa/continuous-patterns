@@ -1,0 +1,70 @@
+experiment:
+  name: aging_demo
+  model: agate_ch
+  seed: 42
+  description: |
+    Closed cavity, initially filled with moganite, aging to chalcedony
+    + small fraction to α-quartz. Demonstrates Step 2 features.
+
+geometry:
+  type: circular_cavity
+  L: 200.0
+  R: 80.0
+  n: 256
+  eps_scale: 2.0
+
+physics:
+  phases:
+    moganite:
+      potential: tilted_well
+      potential_kwargs: { W: 1.0, tilt: 0.05 }
+      mobility: 0.01
+      rho: 1.0
+      psi_sign: 1.0
+    chalcedony:
+      potential: double_well
+      potential_kwargs: { W: 1.0 }
+      mobility: 1.0
+      rho: 1.0
+      psi_sign: -1.0
+    alpha_quartz:
+      potential: double_well
+      potential_kwargs: { W: 2.0 }
+      mobility: 0.1
+      rho: 1.0
+      psi_sign: 0.0
+      active: true
+  aging:
+    active: true
+    k_age: 0.01
+    q_to_quartz: 0.1
+  gamma: 4.0
+  kappa_x: 0.5
+  kappa_y: 0.5
+  D_c: 1.0
+  k_rxn: 0.0
+  c_sat: 0.5
+  c_0: 0.0
+  c_ostwald: 0.5
+  w_ostwald: 0.1
+  lambda_bar: 10.0
+  use_ratchet: false
+  reaction_active: false
+  dirichlet_active: false
+
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+
+time:
+  dt: 0.01
+  T: 1000.0
+  snapshot_every: 500
+
+initial:
+  phi_m_init: 1.0
+  phi_c_init: 0.0
+  phi_q_init: 0.0
+  phi_m_noise: 0.01
+  c_init: 0.0

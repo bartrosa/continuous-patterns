@@ -14,7 +14,10 @@ from continuous_patterns.core.imex import Geometry, SimParams, imex_step
 
 def make_chunk_runner(
     geom: Geometry, prm: SimParams, dt: float
-) -> Callable[[tuple[Array, Array, Array], int], tuple[tuple[Array, Array, Array], Array]]:
+) -> Callable[
+    [tuple[Array, Array, Array, Array, Array], int],
+    tuple[tuple[Array, Array, Array, Array, Array], Array],
+]:
     """Build a JIT-compiled chunk integrator for :func:`imex_step`.
 
     Parameters
@@ -33,12 +36,12 @@ def make_chunk_runner(
 
     @partial(jax.jit, static_argnames=("n_steps",))
     def run_chunk(
-        state: tuple[Array, Array, Array], n_steps: int
-    ) -> tuple[tuple[Array, Array, Array], Array]:
+        state: tuple[Array, Array, Array, Array, Array], n_steps: int
+    ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
         def body(
             _i: int,
-            carry: tuple[tuple[Array, Array, Array], Array],
-        ) -> tuple[tuple[Array, Array, Array], Array]:
+            carry: tuple[tuple[Array, Array, Array, Array, Array], Array],
+        ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
             s, inj_total = carry
             new_s, (_delta, inj_step) = imex_step(s, geom, prm, float(dt))
             return (new_s, inj_total + inj_step)

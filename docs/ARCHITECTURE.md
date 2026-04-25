@@ -99,7 +99,9 @@ Frozen dataclass or `NamedTuple` mirroring **`docs/PHYSICS.md`**, plus **stage r
 
 Stage I: `reaction_active=True`, `dirichlet_active=True` (subject to YAML overrides such as explicit reaction off). Stage II: **`reaction_active=False`**, **`dirichlet_active=False`**.
 
-All remaining knobs ($W$, $\gamma$, $\kappa_x$, $\kappa_y$, barrier, mobilities, `stress_coupling_B`, ratchet parameters, `c0_alpha`, `apply_cavity_mask`, etc.) are **shared fields**; IMEX branches read the booleans **first** so Stage II never executes rim-only code paths.
+Per-phase Cahn–Hilliard mobility, stoichiometric weight $\rho_\alpha$, ψ-sign (for stress), active flag, and bulk-potential parameters are held in **`PhasePotentialParams`** (`core/types.py`): **`SimParams.phi_m_potential`** and **`SimParams.phi_c_potential`**. YAML lists them under **`physics.phases.moganite`** / **`chalcedony`** (`potential`, `potential_kwargs`, …); legacy top-level **`W`**, **`M_m`**, **`M_c`**, **`rho_m`**, **`rho_c`** are still accepted and expanded to **`phases`** before validation (`core/io.py`).
+
+All remaining shared knobs ($\gamma$, $\kappa_x$, $\kappa_y$, `lambda_bar`, `stress_coupling_B`, ratchet parameters, `c0`, etc.) stay on **`SimParams`**; IMEX branches read the booleans **first** so Stage II never executes rim-only code paths.
 
 **Single compute path:** **`core.imex.imex_step(state, geom, prm, dt)`** — no `imex_step_stage2`. Optional JIT-friendly `lax.cond` on `prm.reaction_active` / `prm.dirichlet_active` as today’s code does for stress.
 
@@ -117,11 +119,15 @@ All remaining knobs ($W$, $\gamma$, $\kappa_x$, $\kappa_y$, barrier, mobilities,
 class SimState:
     """Instantaneous fields on the grid."""
 
-    phi_m: jax.Array  # (n, n)
-    phi_c: jax.Array  # (n, n)
-    c: jax.Array      # (n, n)
-    t: float          # physical time
+    phi_m: jax.Array   # (n, n)
+    phi_c: jax.Array   # (n, n)
+    phi_q: jax.Array   # (n, n) — α-quartz; zero when inactive
+    phi_imp: jax.Array # (n, n) — impurity placeholder
+    c: jax.Array       # (n, n)
+    t: float           # physical time
 ```
+
+**IMEX state tuple:** ``imex_step`` advances ``(φ_m, φ_c, φ_q, φ_\mathrm{imp}, c)``. ψ-stress uses ``ψ = Σ_α (\mathrm{psi\_sign}_α\, φ_α)`` over **active** phases; default ``(+, -, 0, 0)`` reproduces ``ψ = φ_m - φ_c``. Optional **aging** reads ``physics.aging`` in YAML (see ``docs/PHYSICS.md`` §3).
 
 ### 2.5 `SimResult`
 
