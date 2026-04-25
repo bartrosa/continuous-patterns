@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Reproduce eight canonical paper-v2 runs via ``continuous_patterns.experiments.run``.
+"""Reproduce canonical paper-v2 + new-geometry runs via ``continuous_patterns.experiments.run``.
 
 Runs are driven as subprocesses (``uv run python -m …``) from the repository root
 so layered config paths and ``experiments/solver_settings.yaml`` resolve correctly.
 
 Environment:
 
-- ``CP_REPRODUCE_MINI=1`` — run a three-run subset with ``CP_OVERRIDE_T=250`` for a quicker check.
+- ``CP_REPRODUCE_MINI=1`` — quick subset (core baselines + new cavity geometries) with
+  ``CP_OVERRIDE_T=250`` for a faster smoke check.
 - ``CP_OVERRIDE_T`` — optional horizon override (seconds); applied by ``run.py`` after load.
 - ``CP_LOG_LEVEL`` — passed as ``--log-level`` (default ``INFO``).
 - ``CP_NO_PROGRESS=1`` — adds ``--no-progress``.
@@ -32,11 +33,23 @@ CANONICAL_BASELINES = [
     "stress_uniform_biaxial",
     "stress_flamant",
     "agate_stage2_gamma_5",
+    "elliptic_pinning",
+    "polygon_pinning",
+    "wedge_pinning",
+    "rectangular_slot_pinning",
 ]
 
 _mini = os.environ.get("CP_REPRODUCE_MINI", "").strip().lower()
 if _mini in {"1", "true", "yes"}:
-    CANONICAL_BASELINES = ["no_pinning", "medium_pinning", "agate_stage2_gamma_5"]
+    CANONICAL_BASELINES = [
+        "no_pinning",
+        "medium_pinning",
+        "agate_stage2_gamma_5",
+        "elliptic_pinning",
+        "polygon_pinning",
+        "wedge_pinning",
+        "rectangular_slot_pinning",
+    ]
     OVERRIDE_T = 250.0
 else:
     OVERRIDE_T = None
