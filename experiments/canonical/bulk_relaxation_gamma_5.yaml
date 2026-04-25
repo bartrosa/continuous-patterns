@@ -1,6 +1,6 @@
 experiment:
-  name: agate_stage2_gamma_5
-  model: agate_stage2
+  name: bulk_relaxation_gamma_5
+  model: bulk_relaxation
   seed: 42
 
 geometry:

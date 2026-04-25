@@ -135,13 +135,183 @@ def pressure_gradient(
     return sxx, syy, z
 
 
-def kirsch(
-    *, L: float, R: float, n: int, sigma_0: float, **kwargs: Any
+def _polar_to_cartesian(
+    srr: Array, stt: Array, srt: Array, th: Array
 ) -> tuple[Array, Array, Array]:
-    """Reserved Kirsch / inclusion theory path (PHYSICS §7.6) — not implemented."""
-    raise NotImplementedError(
-        "Kirsch / inclusion-theory stress is reserved for future work (PHYSICS §7.6)."
+    c = jnp.cos(th)
+    s = jnp.sin(th)
+    sxx = srr * c * c + stt * s * s - 2.0 * srt * s * c
+    syy = srr * s * s + stt * c * c + 2.0 * srt * s * c
+    sxy = (srr - stt) * s * c + srt * (c * c - s * s)
+    return sxx, syy, sxy
+
+
+def kirsch(
+    *,
+    L: float,
+    R: float,
+    n: int,
+    S_xx_far: float,
+    S_yy_far: float,
+    S_xy_far: float = 0.0,
+    dtype: DTypeLike = jnp.float32,
+) -> tuple[Array, Array, Array]:
+    """Kirsch (1898): infinite plate with traction-free circular hole under remote plane stress.
+
+    Uses the general remote tensor ``(S_xx_far, S_yy_far, S_xy_far)`` (fracturemechanics.org
+    “General 2-D Loading” polar formulas). Inside ``r < R`` the evaluation uses
+    ``r_eff = max(r, R)`` to avoid the origin singularity.
+    """
+    if R <= 0:
+        raise ValueError(f"Kirsch requires R > 0, got {R}")
+    x, y, _ = _cell_grid(L=L, n=n, dtype=dtype)
+    xc = 0.5 * L
+    yc = 0.5 * L
+    xr = x - xc
+    yr = y - yc
+    r = jnp.sqrt(xr * xr + yr * yr)
+    r_eff = jnp.maximum(r, jnp.asarray(float(R), dtype=dtype))
+    th = jnp.arctan2(yr, xr)
+    t = (float(R) / r_eff) ** 2
+    t2 = t * t
+    srr_inf = 0.5 * (float(S_xx_far) + float(S_yy_far))
+    sdiff = 0.5 * (float(S_xx_far) - float(S_yy_far))
+    sxyf = float(S_xy_far)
+    srr = srr_inf * (1.0 - t) + (sdiff * jnp.cos(2.0 * th) + sxyf * jnp.sin(2.0 * th)) * (
+        1.0 - 4.0 * t + 3.0 * t2
     )
+    stt = srr_inf * (1.0 + t) - (sdiff * jnp.cos(2.0 * th) + sxyf * jnp.sin(2.0 * th)) * (
+        1.0 + 3.0 * t2
+    )
+    srt = ((-sdiff) * jnp.sin(2.0 * th) + sxyf * jnp.cos(2.0 * th)) * (1.0 + 2.0 * t - 3.0 * t2)
+    return _polar_to_cartesian(srr, stt, srt, th)
+
+
+def lithostatic(
+    *,
+    L: float,
+    n: int,
+    rho_g_dim: float,
+    lateral_K: float = 1.0,
+    dtype: DTypeLike = jnp.float32,
+) -> tuple[Array, Array, Array]:
+    """Lithostatic-style ``σ_yy(y) = -ρg (L-y)``, ``σ_xx = lateral_K σ_yy``, ``σ_xy=0``."""
+    if rho_g_dim <= 0:
+        raise ValueError(f"lithostatic requires rho_g_dim > 0, got {rho_g_dim}")
+    if not (0.0 < float(lateral_K) <= 1.0 + 1e-9):
+        raise ValueError(f"lithostatic requires 0 < lateral_K <= 1, got {lateral_K}")
+    _, y, _ = _cell_grid(L=L, n=n, dtype=dtype)
+    syy = -float(rho_g_dim) * (jnp.asarray(L, dtype=dtype) - y)
+    sxx = jnp.asarray(float(lateral_K), dtype=dtype) * syy
+    z = jnp.zeros_like(sxx)
+    return sxx, syy, z
+
+
+def tectonic_far_field(
+    *,
+    L: float,
+    n: int,
+    S_H: float,
+    S_h: float,
+    S_V: float,
+    theta_SH: float = 0.0,
+    dtype: DTypeLike = jnp.float32,
+) -> tuple[Array, Array, Array]:
+    """Uniform remote Anderson-style horizontal principal stresses rotated by ``theta_SH``.
+
+    The in-plane Cauchy tensor is ``diag(S_H, S_h)`` in principal axes, rotated into ``(x,y)``.
+    ``S_V`` is accepted for YAML documentation / regime labelling only; it does **not** enter the
+    2D plane-stress tensor (see spec).
+    """
+    _ = L
+    _ = S_V
+    c = jnp.cos(jnp.asarray(float(theta_SH), dtype=dtype))
+    s = jnp.sin(jnp.asarray(float(theta_SH), dtype=dtype))
+    sxx = jnp.full((n, n), float(S_H) * c * c + float(S_h) * s * s, dtype=dtype)
+    syy = jnp.full((n, n), float(S_H) * s * s + float(S_h) * c * c, dtype=dtype)
+    sxy = jnp.full((n, n), (float(S_H) - float(S_h)) * float(c) * float(s), dtype=dtype)
+    return sxx, syy, sxy
+
+
+def inglis(
+    *,
+    L: float,
+    n: int,
+    a: float,
+    b: float,
+    theta: float = 0.0,
+    S_xx_far: float = 0.0,
+    S_yy_far: float = 0.0,
+    S_xy_far: float = 0.0,
+    dtype: DTypeLike = jnp.float32,
+) -> tuple[Array, Array, Array]:
+    """Inglis (1913) / elliptic-hole stress around a traction-free ellipse.
+
+    When ``a ≈ b`` (within a relative tolerance), delegates to :func:`kirsch` with
+    ``R = (a+b)/2`` so the circular limit is exact.
+
+    For ``a ≠ b``, uses a **circular Kirsch surrogate** with ``R = sqrt(a·b)`` in the
+    ellipse-aligned frame (``# TODO``: replace with full Muskhelishvili / elliptic-coordinate
+    field for a true Inglis ellipse). Remote loading uses ``(S_xx_far, S_yy_far, S_xy_far)`` in
+    the **lab** frame; rotate internally by ``theta`` only when the full field is implemented.
+    """
+    if a <= 0 or b <= 0:
+        raise ValueError(f"inglis requires a,b > 0, got a={a}, b={b}")
+    aa, bb = float(a), float(b)
+    _ = theta  # ellipse orientation reserved for future full Inglis field
+    if abs(aa - bb) <= 1e-5 * max(aa, bb):
+        return kirsch(
+            L=L,
+            R=0.5 * (aa + bb),
+            n=n,
+            S_xx_far=S_xx_far,
+            S_yy_far=S_yy_far,
+            S_xy_far=S_xy_far,
+            dtype=dtype,
+        )
+    # TODO(Package3): full Inglis / Muskhelishvili σ field for a ≠ b (currently Kirsch surrogate).
+    R_eff = float((aa * bb) ** 0.5)
+    return kirsch(
+        L=L,
+        R=R_eff,
+        n=n,
+        S_xx_far=S_xx_far,
+        S_yy_far=S_yy_far,
+        S_xy_far=S_xy_far,
+        dtype=dtype,
+    )
+
+
+def pore_pressure_field(
+    *,
+    L: float,
+    n: int,
+    field: str,
+    p0: float,
+    dtype: DTypeLike = jnp.float32,
+) -> Array:
+    """Scalar pore pressure grid for ``uniform`` or ``hydrostatic`` (linear in ``y``)."""
+    _, y, _ = _cell_grid(L=L, n=n, dtype=dtype)
+    if field == "uniform":
+        return jnp.full((n, n), float(p0), dtype=dtype)
+    if field == "hydrostatic":
+        Ld = jnp.asarray(L, dtype=dtype)
+        return jnp.asarray(float(p0), dtype=dtype) * (Ld - y) / Ld
+    raise ValueError(f"pore_pressure.field must be 'uniform' or 'hydrostatic', got {field!r}")
+
+
+def apply_pore_pressure(
+    sigma_xx: Array,
+    sigma_yy: Array,
+    sigma_xy: Array,
+    *,
+    p_pore: Array | float,
+    biot_alpha: float = 1.0,
+) -> tuple[Array, Array, Array]:
+    """Terzaghi/Biot effective normal stresses: ``σ' = σ - α p I`` (shear unchanged)."""
+    p = jnp.asarray(p_pore, dtype=sigma_xx.dtype)
+    ba = jnp.asarray(float(biot_alpha), dtype=sigma_xx.dtype)
+    return sigma_xx - ba * p, sigma_yy - ba * p, sigma_xy
 
 
 STRESS_BUILDERS: dict[str, Callable[..., tuple[Array, Array, Array]]] = {
@@ -152,6 +322,9 @@ STRESS_BUILDERS: dict[str, Callable[..., tuple[Array, Array, Array]]] = {
     "flamant_two_point": flamant_two_point,
     "pressure_gradient": pressure_gradient,
     "kirsch": kirsch,
+    "lithostatic": lithostatic,
+    "tectonic_far_field": tectonic_far_field,
+    "inglis": inglis,
 }
 
 

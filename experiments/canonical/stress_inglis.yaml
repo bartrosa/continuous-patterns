@@ -1,15 +1,17 @@
 experiment:
-  name: stress_pressure_gradient
+  name: stress_inglis
   model: cavity_reactive
   seed: 42
   description: |
-    Exploratory: medium_pinning-like physics + pressure-gradient stress (not paper v2 canonical).
+    Canonical card for Inglis / elliptic-cavity stress; semi-axes synced from geometry.
 
 geometry:
-  type: circular_cavity
+  type: elliptic_cavity
   L: 200.0
-  R: 80.0
   n: 512
+  a: 80.0
+  b: 40.0
+  theta: 0.0
   eps_scale: 2.0
 
 physics:
@@ -31,10 +33,11 @@ physics:
   phi_m_ratchet_high: 0.5
 
 stress:
-  mode: pressure_gradient
-  sigma_0: 0.5
+  mode: inglis
+  S_xx_far: 1.0
+  S_yy_far: 0.3
+  S_xy_far: 0.0
   stress_coupling_B: 0.3
-  stress_eps_factor: 3.0
 
 time:
   T: 10000.0

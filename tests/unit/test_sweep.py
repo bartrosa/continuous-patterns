@@ -19,7 +19,7 @@ _GAMMA_SWEEP_TEMPLATE = _REPO_ROOT / "experiments" / "sweeps" / "gamma_scan.yaml
 
 def _write_minimal_agate_ch_config(path: Path) -> None:
     cfg = {
-        "experiment": {"name": "sweep_base", "model": "agate_ch", "seed": 0},
+        "experiment": {"name": "sweep_base", "model": "cavity_reactive", "seed": 0},
         "geometry": {"type": "circular_cavity", "L": 6.0, "R": 2.0, "n": 24},
         "physics": {
             "W": 1.0,

@@ -43,7 +43,7 @@ See [ARCHITECTURE.md §2.8](ARCHITECTURE.md). In short:
 
 1. Add ``def my_potential_prime(phi: Array, *, …) -> Array`` in ``core/potentials.py`` (same contract as existing ``*_prime`` helpers: returns ``∂f/∂φ``, shape/dtype match ``phi``).
 2. Register it: ``POTENTIAL_BUILDERS["my_potential"] = my_potential_prime``.
-3. Extend ``PhaseSpec.potential``’s ``Literal[...]`` in ``core/io.py`` and handle any new kwargs in ``models/agate_ch.py`` ``phase_potential_params_from_spec`` (map ``potential_kwargs`` into ``PhasePotentialParams`` fields) if the potential needs parameters beyond the existing slots.
+3. Extend ``PhaseSpec.potential``’s ``Literal[...]`` in ``core/io.py`` and handle any new kwargs in ``models/cavity_reactive.py`` ``phase_potential_params_from_spec`` (map ``potential_kwargs`` into ``PhasePotentialParams`` fields) if the potential needs parameters beyond the existing slots.
 
 ### New diagnostic
 

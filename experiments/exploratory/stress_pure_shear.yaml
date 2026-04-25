@@ -1,6 +1,6 @@
 experiment:
   name: stress_pure_shear
-  model: agate_ch
+  model: cavity_reactive
   seed: 42
   description: |
     Exploratory: medium_pinning-like physics + pure shear (not paper v2 canonical).

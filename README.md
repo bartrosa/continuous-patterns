@@ -57,7 +57,7 @@ Each sweep creates `results/sweeps/<name>_<timestamp>/` with a `manifest.json`, 
 
 ### Programmatic baseline smoke
 
-[`scripts/reproduce_canonical.py`](scripts/reproduce_canonical.py) runs **twelve** nested canonical YAMLs under `experiments/canonical/` via the package CLI (production `n`/`T` by default): the original eight paper-v2 baselines plus four **non-circular cavity** cards (`elliptic_pinning`, `polygon_pinning`, `wedge_pinning`, `rectangular_slot_pinning`). Set `CP_REPRODUCE_MINI=1` for a **seven-run** smoke — `no_pinning`, `medium_pinning`, `agate_stage2_gamma_5`, and those four geometry names — each with a shorter horizon (`CP_OVERRIDE_T=250`).
+[`scripts/reproduce_canonical.py`](scripts/reproduce_canonical.py) runs **16** nested per-feature demo YAMLs under `experiments/canonical/` (Stage I/II baselines, geometry, stress, gravity, scenario, and the aging code demo) via the package CLI. Set `CP_REPRODUCE_MINI=1` for a **4-run** mini smoke (one example per feature category) with a shorter horizon (`CP_OVERRIDE_T=250`).
 
 ```bash
 make help
@@ -65,7 +65,7 @@ make test
 uv run python scripts/reproduce_canonical.py
 ```
 
-Quick smoke: `CP_REPRODUCE_MINI=1 uv run python scripts/reproduce_canonical.py` or `make mini` (same seven names and `T` override as above).
+Quick smoke: `CP_REPRODUCE_MINI=1 uv run python scripts/reproduce_canonical.py` or `make mini` (four names and `T=250` override as in the script).
 
 Environment variables for that script: **`CP_LOG_LEVEL`** (default `INFO`), **`CP_NO_PROGRESS=1`** to turn off tqdm (passed through as CLI flags), and **`CP_OVERRIDE_T`** (optional horizon override; set automatically in mini mode).
 

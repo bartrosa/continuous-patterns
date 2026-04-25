@@ -2,7 +2,7 @@
 
 This document defines the **target** layout and contracts for a clean-slate, publication-grade package. It complements **`docs/PHYSICS.md`** (equations and methods).
 
-After cleanup, the **`continuous_patterns.agate_ch`** / **`agate_stage2`** packages and their CLIs **do not exist**; all simulation entry is through **`continuous_patterns.experiments`**. Historical **`results/agate_ch/...`** trees may remain on disk as **read-only archives**; **new** runs use the **single** `results/` schema below (no `results/v2/` parallel).
+Stage I/II are implemented in **`models.cavity_reactive`** and **`models.bulk_relaxation`**; all simulation entry is through **`continuous_patterns.experiments`**. Historical **`results/agate_ch/...`** (old folder names) may remain on disk; **new** runs use the **single** `results/` schema below.
 
 **Design rules**
 
@@ -33,8 +33,8 @@ src/continuous_patterns/
     solver_defaults.yaml     # bundled solver-global defaults (package data)
 
   models/
-    agate_ch.py              # Stage I: build Geometry + SimParams; integrate
-    agate_stage2.py          # Stage II: bulk setup; same imex; different diagnostics
+    cavity_reactive.py        # Stage I: cavity + reaction; build Geometry + SimParams; integrate
+    bulk_relaxation.py        # Stage II: bulk; same imex; different diagnostics
 
   experiments/
     run.py                   # canonical CLI: YAML → model → results tree
@@ -49,8 +49,8 @@ experiments/                 # repo-root: user-space experiment cards (not in wh
 
 scripts/
   reproduce_canonical.py
-  compare_with_archive.py
-  inspect_flux_samples.py
+  compare_archive.py
+  inspect_flux.py
 
 tests/
   unit/
@@ -67,7 +67,7 @@ README.md
 pyproject.toml
 ```
 
-**Canonical entry point:** `python -m continuous_patterns.experiments.run --config <path/to/nested.yaml> [--out-dir ...]`. There is **no** `python -m continuous_patterns.agate_ch.run` in the new tree.
+**Canonical entry point:** `python -m continuous_patterns.experiments.run --config <path/to/nested.yaml> [--out-dir ...]`. There is no separate `python -m` entry point on the model modules; use the experiments CLI.
 
 ---
 
@@ -87,7 +87,7 @@ Immutable **per-cell** masks, spectral symbols, and prescribed $\sigma$ on the $
 | `rv` | `jax.Array` | Stage I: **Euclidean** radius from domain centre $(L/2,L/2)$ on the grid (same for circular and non-circular builders). Stage II: may be dummy or omitted; cavity diagnostics must **not** run for Stage II. |
 | `dx`, `L`, `R`, `n`, `xc`, `yc` | scalars | Metadata; `R` is the nominal cavity radius for **circular** masks; for other `geometry.type` values it stores an **effective** length (e.g. $\sqrt{ab}$ for an ellipse, $\sqrt{A/\pi}$ from polygon area) for plotting and diagnostics that still take a scalar length. Pure bulk Stage II may set `R: 0` on `circular_cavity`. |
 
-**Construction:** `models.agate_ch.build_geometry` vs `models.agate_stage2.build_geometry` (bulk builder). **Numerical time stepping** does not switch modules — only **`SimParams` flags** (§2.2) and **diagnostics modules** differ.
+**Construction:** `models.cavity_reactive.build_geometry` vs `models.bulk_relaxation.build_geometry` (bulk builder). **Numerical time stepping** does not switch modules — only **`SimParams` flags** (§2.2) and **diagnostics modules** differ.
 
 ### 2.2 `SimParams` / physics knob bundle
 
@@ -157,7 +157,7 @@ The **only** format accepted by **`core.io`** for new code is **nested** YAML ma
 ```yaml
 experiment:
   name: str
-  model: agate_ch | agate_stage2
+  model: cavity_reactive | bulk_relaxation
   seed: int
 
 geometry:
@@ -334,7 +334,7 @@ def save_summary(path: Path, payload: dict[str, Any]) -> None: ...
 
 ## 4. Module reference (`models/`)
 
-### 4.1 `models.agate_ch`
+### 4.1 `models.cavity_reactive` (Stage I)
 
 **Depends on:** `core` only.
 
@@ -351,7 +351,7 @@ def simulate(
 
 **Progress / logging:** the outer integration loop uses **`tqdm.auto`** (total steps = `T/dt`, postfix simulation time `t`). Standard **`logging`** under the **`continuous_patterns`** namespace: **`run.log`** in the run directory (DEBUG) when `experiments.run` writes artifacts; console level follows **`run_one(..., log_level=...)`** / CLI **`--log-level`**. Per-chunk lines are **DEBUG** only (not per micro-step).
 
-### 4.2 `models.agate_stage2`
+### 4.2 `models.bulk_relaxation` (Stage II)
 
 **Depends on:** `core` only.
 
@@ -423,7 +423,7 @@ Merges sweep YAML into nested per-run dicts; calls **`experiments.run.run_one`**
 
 ## 8. `scripts/reproduce_canonical.py`
 
-Calls **`experiments.run.run_one`** on **twelve** nested YAML paths under **`experiments/canonical/`**: the eight original paper-v2 baselines plus **`elliptic_pinning`**, **`polygon_pinning`**, **`wedge_pinning`**, **`rectangular_slot_pinning`**. With **`CP_REPRODUCE_MINI=1`**, the script runs a **seven-run** smoke (`no_pinning`, `medium_pinning`, `agate_stage2_gamma_5`, and the four geometry names) and forces **`CP_OVERRIDE_T=250`**. Other environment variables: **`CP_LOG_LEVEL`**, **`CP_NO_PROGRESS`**, optional **`CP_OVERRIDE_T`** when not in mini mode (see README Quick start).
+Calls **`experiments.run.run_one`** on **21** nested YAML paths under **`experiments/canonical/`** (paper-v2 baselines, non-circular cavity cards, and **stress** / **gravity** / **scenario** package templates). With **`CP_REPRODUCE_MINI=1`**, the script runs a **16-run** extended smoke and forces **`CP_OVERRIDE_T=250`**. Other environment variables: **`CP_LOG_LEVEL`**, **`CP_NO_PROGRESS`**, optional **`CP_OVERRIDE_T`** when not in mini mode (see README Quick start).
 
 ---
 
@@ -473,9 +473,9 @@ A canonical YAML (e.g. **`experiments/canonical/medium_pinning.yaml`**) may omit
 
 ---
 
-## 11. Migration (clean slate — no shim)
+## 11. Migration (clean slate)
 
-1. **Delete** old packages **`agate_ch/`**, **`agate_stage2/`**, and their **`python -m …run`** entry points as part of **Phase 2 cleanup** (see **`CLEANUP_PLAN.md`**). **No** compatibility shim.
+1. **Package layout** supersedes old **`agate_ch`** / **`agate_stage2`** module names: use **`cavity_reactive`** / **`bulk_relaxation`**. For **archived nested YAMLs** that still say `model: agate_ch`, **`core.io` accepts those keys** and rewrites to the new names (with a **deprecation** `logging` warning) — in-repo canonical cards use the new strings only.
 2. **Configs:** convert archived flat YAML → **`experiments/canonical/*.yaml`** nested form **once** (throwaway converter); **`core.io`** accepts **nested only**.
 3. **Results:** do **not** move or delete historical directories; **new** runs write only the **§5** layout under `results/`.
 4. **README** documents **`experiments.run`** as the sole simulation CLI.
@@ -498,4 +498,4 @@ Integration tests run on **CPU** with **`jax_enable_x64=False`** to match the de
 
 ---
 
-*Document version: Phase 1 + §12 closure — aligned with `CLEANUP_PLAN.md` Phase 2; §3.2 / §8 / §2.1 updated for multi-cavity `MASK_BUILDERS` and twelve-path reproduce script.*
+*Document version: Phase 1 + §12 closure — aligned with `CLEANUP_PLAN.md` Phase 2; §3.2 / §8 / §2.1 updated for multi-cavity `MASK_BUILDERS` and 21-path reproduce script (`CP_REPRODUCE_MINI` = 16 runs).*

@@ -35,11 +35,11 @@ from continuous_patterns.core.plotting import (
     write_evolution_gif,
 )
 from continuous_patterns.core.types import SimResult
-from continuous_patterns.models import agate_ch, agate_stage2
+from continuous_patterns.models import bulk_relaxation, cavity_reactive
 
 MODEL_DISPATCH: dict[str, Any] = {
-    "agate_ch": agate_ch.simulate,
-    "agate_stage2": agate_stage2.simulate,
+    "cavity_reactive": cavity_reactive.simulate,
+    "bulk_relaxation": bulk_relaxation.simulate,
 }
 
 logger = logging.getLogger(__name__)

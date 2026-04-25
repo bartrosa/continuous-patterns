@@ -15,7 +15,10 @@ from continuous_patterns.core.spectral import k_vectors
 from continuous_patterns.core.stress import none as stress_none
 from continuous_patterns.core.stress import uniform_biaxial
 from continuous_patterns.core.types import PhasePotentialParams
-from continuous_patterns.models.agate_ch import build_sim_params, phase_potential_params_from_spec
+from continuous_patterns.models.cavity_reactive import (
+    build_sim_params,
+    phase_potential_params_from_spec,
+)
 
 
 def _s5(

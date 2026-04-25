@@ -1,10 +1,9 @@
 experiment:
-  name: no_pinning
-  model: agate_ch
+  name: scenario_closed_supersaturated
+  model: cavity_reactive
   seed: 42
   description: |
-    v1-era physics without pinning mechanism (γ=2, M_m=0.1, ratchet off).
-    Reference without ratchet / strong γ — falsification control for Q1/Q2.
+    Sealed cavity, supersaturated fluid — initial.scenario closed_supersaturated.
 
 geometry:
   type: circular_cavity
@@ -15,10 +14,10 @@ geometry:
 
 physics:
   W: 1.0
-  gamma: 2.0
+  gamma: 4.0
   kappa_x: 0.5
   kappa_y: 0.5
-  M_m: 0.1
+  M_m: 0.01
   M_c: 1.0
   D_c: 1.0
   k_rxn: 0.5
@@ -27,15 +26,17 @@ physics:
   c_ostwald: 0.6
   w_ostwald: 0.1
   lambda_bar: 10.0
-  use_ratchet: false
+  use_ratchet: true
+  phi_m_ratchet_low: 0.3
+  phi_m_ratchet_high: 0.5
 
 stress:
   mode: none
   sigma_0: 0.0
   stress_coupling_B: 0.0
-  stress_eps_factor: 3.0
 
 time:
   T: 10000.0
 
-initial: {}
+initial:
+  scenario: closed_supersaturated

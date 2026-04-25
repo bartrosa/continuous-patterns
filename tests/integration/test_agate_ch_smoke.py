@@ -7,14 +7,14 @@ from pathlib import Path
 import jax.numpy as jnp
 import pytest
 
-from continuous_patterns.models.agate_ch import simulate
+from continuous_patterns.models.cavity_reactive import simulate
 
 
 def test_agate_ch_smoke_short_run(tmp_path: Path) -> None:
     """End-to-end: nested dict config → simulate → SimResult with finite fields."""
     _ = tmp_path
     cfg = {
-        "experiment": {"name": "smoke_test", "model": "agate_ch"},
+        "experiment": {"name": "smoke_test", "model": "cavity_reactive"},
         "geometry": {"type": "circular_cavity", "L": 10.0, "R": 3.0, "n": 32},
         "physics": {
             "W": 1.0,

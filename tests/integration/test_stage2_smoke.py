@@ -5,13 +5,13 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from continuous_patterns.models.agate_stage2 import simulate
+from continuous_patterns.models.bulk_relaxation import simulate
 
 
 def test_agate_stage2_smoke_short_run() -> None:
     """End-to-end Stage II: mixed IC evolves; structure factor is finite."""
     cfg = {
-        "experiment": {"name": "smoke_stage2", "model": "agate_stage2"},
+        "experiment": {"name": "smoke_stage2", "model": "bulk_relaxation"},
         "geometry": {"type": "circular_cavity", "L": 10.0, "R": 0.0, "n": 32},
         "physics": {
             "W": 1.0,
