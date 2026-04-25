@@ -140,6 +140,13 @@ def _smoothstep_S(phi_m: Array, low: float, high: float) -> Array:
     return t * t * (3.0 - 2.0 * t)
 
 
+def _phi_contribution_to_packing(phi: Array, pot: PhasePotentialParams) -> Array:
+    """Solid fraction entering the packing ceiling only when the phase is active."""
+    if pot.active:
+        return phi
+    return jnp.zeros_like(phi)
+
+
 def _G(
     c: Array,
     phi_m: Array,
@@ -154,7 +161,14 @@ def _G(
     α-quartz is not fed by this channel — only by aging when configured.
     """
     relu_c = jnp.maximum(c - prm.c_sat, 0.0)
-    relu_p = jnp.maximum(1.0 - phi_m - phi_c - phi_q - phi_imp, 0.0)
+    relu_p = jnp.maximum(
+        1.0
+        - _phi_contribution_to_packing(phi_m, prm.phi_m_potential)
+        - _phi_contribution_to_packing(phi_c, prm.phi_c_potential)
+        - _phi_contribution_to_packing(phi_q, prm.phi_q_potential)
+        - _phi_contribution_to_packing(phi_imp, prm.phi_imp_potential),
+        0.0,
+    )
     return prm.k_rxn * relu_c * relu_p
 
 
@@ -255,6 +269,8 @@ def _update_phase(
     stress_delta: Array,
 ) -> Array:
     """Implicit linear CH stiff block in Fourier space with explicit ``μ_nl``."""
+    if not pot.active:
+        return phi
     stiff_sym = prm.kappa_x * geom.kx_sq + prm.kappa_y * geom.ky_sq
     builder = POTENTIAL_BUILDERS[pot.kind]
     kwargs = _potential_kwargs_for_kind(pot)
@@ -372,7 +388,8 @@ def imex_step(
     )
     phi_m_new = phi_m_new - dt * chi * G_age
     phi_c_new = phi_c_new + dt * chi * (1.0 - prm.q_to_quartz) * G_age
-    phi_q_new = phi_q_new + dt * chi * prm.q_to_quartz * G_age
+    if prm.phi_q_potential.active:
+        phi_q_new = phi_q_new + dt * chi * prm.q_to_quartz * G_age
 
     c_before_rim = c_new
     c_new = jax.lax.cond(
@@ -388,8 +405,14 @@ def imex_step(
     hi = jnp.asarray(1.05, dtype=phi_m_new.dtype)
     phi_m_new = jnp.clip(phi_m_new, lo, hi)
     phi_c_new = jnp.clip(phi_c_new, lo, hi)
-    phi_q_new = jnp.clip(phi_q_new, lo, hi)
-    phi_imp_new = jnp.clip(phi_imp_new, lo, hi)
+    if prm.phi_q_potential.active:
+        phi_q_new = jnp.clip(phi_q_new, lo, hi)
+    else:
+        phi_q_new = jnp.zeros_like(phi_q)
+    if prm.phi_imp_potential.active:
+        phi_imp_new = jnp.clip(phi_imp_new, lo, hi)
+    else:
+        phi_imp_new = jnp.zeros_like(phi_imp)
 
     delta_pair = jnp.zeros((2,), dtype=c_new.dtype)
     return (phi_m_new, phi_c_new, phi_q_new, phi_imp_new, c_new), (delta_pair, injection_this_step)

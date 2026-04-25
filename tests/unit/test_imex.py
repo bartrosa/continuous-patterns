@@ -549,7 +549,20 @@ def test_aging_requires_active_quartz() -> None:
 
 
 def test_packing_ceiling_includes_quartz_channel() -> None:
-    prm = SimParams(reaction_active=True, k_rxn=1.0, c_sat=0.0)
+    """When α-quartz is active, its solid fraction enters the packing ceiling."""
+    prm = SimParams(
+        reaction_active=True,
+        k_rxn=1.0,
+        c_sat=0.0,
+        phi_q_potential=PhasePotentialParams(
+            kind="double_well",
+            W=2.0,
+            mobility=0.1,
+            rho=1.0,
+            psi_sign=0.0,
+            active=True,
+        ),
+    )
     c = jnp.asarray(1.0)
     pm = jnp.asarray(0.45)
     pc = jnp.asarray(0.45)

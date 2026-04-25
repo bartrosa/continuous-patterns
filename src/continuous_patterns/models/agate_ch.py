@@ -228,8 +228,8 @@ def build_initial_state(
     Interior ``c = c_sat`` (or ``initial.c_init``) avoids uniform supersaturation at ``t=0``;
     the rim Dirichlet supplies ``c_0`` each step so a diffusive gradient rim→interior can form.
     Outside ``χ≈0``, ``c=0`` — no periodic-torus silica reservoir (see ``docs/PHYSICS.md`` §6.1).
+    Inactive phases get no cavity noise (strict zeros).
     """
-    _ = prm
     n = geom.n
     dtype = geom.chi.dtype
     ph = cfg["physics"]
@@ -248,8 +248,14 @@ def build_initial_state(
     chi = geom.chi
     phi_m = (phi_m0 + sig_m * jax.random.normal(k_m, (n, n), dtype=dtype)) * chi
     phi_c = (phi_c0 + sig_c * jax.random.normal(k_c, (n, n), dtype=dtype)) * chi
-    phi_q = (phi_q0 + sig_q * jax.random.normal(k_q, (n, n), dtype=dtype)) * chi
-    phi_imp = (phi_imp0 + sig_imp * jax.random.normal(k_i, (n, n), dtype=dtype)) * chi
+    if prm.phi_q_potential.active:
+        phi_q = (phi_q0 + sig_q * jax.random.normal(k_q, (n, n), dtype=dtype)) * chi
+    else:
+        phi_q = jnp.zeros((n, n), dtype=dtype)
+    if prm.phi_imp_potential.active:
+        phi_imp = (phi_imp0 + sig_imp * jax.random.normal(k_i, (n, n), dtype=dtype)) * chi
+    else:
+        phi_imp = jnp.zeros((n, n), dtype=dtype)
 
     c_sat = float(_require(ph, "c_sat", where="physics"))
     _ = float(_require(ph, "c_0", where="physics"))  # must be present for rim Dirichlet
@@ -517,6 +523,7 @@ def _assemble_diagnostics(
     R = float(geom.R)
 
     disk = hard_disk_mask(L=L, n=int(geom.n), cavity_R=R)
+    phi_q_int = float(np.sum(chi * pq) * dx * dx) if prm.phi_q_potential.active else 0.0
     out: dict[str, Any] = {
         "chi_weighted_silica_final": chi_weighted_silica_integral(
             cc,
@@ -527,7 +534,7 @@ def _assemble_diagnostics(
             rho_c=float(prm.phi_c_potential.rho),
             dx=dx,
         ),
-        "phi_q_chi_weighted_integral": float(np.sum(chi * pq) * dx * dx),
+        "phi_q_chi_weighted_integral": phi_q_int,
         "jab_canonical": jab_metrics_canonical_slice(pm, pc, L=L, R=R),
         "bands_multislice": count_bands_multislice(pm, pc, L=L, R=R),
         "psi_fft_anisotropy": fft_psi_anisotropy_ratio(pm, pc, L=L, cavity_R=R),

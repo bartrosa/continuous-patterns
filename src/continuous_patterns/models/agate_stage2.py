@@ -219,7 +219,6 @@ def build_initial_state(
     Future: optional ``cfg['initial']['from_npz']`` to continue from Stage I
     ``final_state.npz`` — not implemented.
     """
-    _ = prm
     if cfg.get("initial", {}).get("from_npz"):
         raise NotImplementedError("initial.from_npz for Stage II is not implemented yet.")
 
@@ -240,8 +239,14 @@ def build_initial_state(
     k_m, k_c, k_q, k_i, _ = jax.random.split(key, 5)
     phi_m = phi_m0 + sig_m * jax.random.normal(k_m, (n, n), dtype=dtype)
     phi_c = phi_c0 + sig_c * jax.random.normal(k_c, (n, n), dtype=dtype)
-    phi_q = phi_q0 + sig_q * jax.random.normal(k_q, (n, n), dtype=dtype)
-    phi_imp = phi_imp0 + sig_imp * jax.random.normal(k_i, (n, n), dtype=dtype)
+    if prm.phi_q_potential.active:
+        phi_q = phi_q0 + sig_q * jax.random.normal(k_q, (n, n), dtype=dtype)
+    else:
+        phi_q = jnp.zeros((n, n), dtype=dtype)
+    if prm.phi_imp_potential.active:
+        phi_imp = phi_imp0 + sig_imp * jax.random.normal(k_i, (n, n), dtype=dtype)
+    else:
+        phi_imp = jnp.zeros((n, n), dtype=dtype)
     c0 = float(ic.get("c_init", ph.get("c_0", 0.0)))
     c = jnp.full((n, n), c0, dtype=dtype)
     return SimState(phi_m=phi_m, phi_c=phi_c, phi_q=phi_q, phi_imp=phi_imp, c=c, t=0.0)
