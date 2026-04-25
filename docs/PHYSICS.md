@@ -99,6 +99,89 @@ $$
 
 where $r \in \{0,1\}$ is the ratchet on/off flag in simulation parameters (`use_ratchet`). Intuitively, for intermediate $\phi_m$ the effective partition shifts toward moganite relative to the pure Ostwald curve — a **phenomenological kinetic asymmetry**, not derived from a single equilibrium double well.
 
+### 3.5 Aging reaction and nucleation requirement
+
+The aging reaction converts moganite to chalcedony (with optional
+fraction $q_{\mathrm{to\_quartz}}$ to α-quartz) at a rate
+
+$$
+G_{\mathrm{age}} = k_{\mathrm{age}} \, \phi_m \, \max(c_{\mathrm{sat}} - c,\, 0).
+$$
+
+This is a **first-order kinetic rate law** in moganite content,
+gated by undersaturation: aging fires when the local solution is
+**below** saturation (driving moganite to dissolve and recrystallize as
+the more stable polymorph). Mass is partitioned in `imex_step` as
+
+$$
+\partial_t \phi_m \mathrel{-}= \chi G_{\mathrm{age}}, \quad
+\partial_t \phi_c \mathrel{+}= \chi (1 - q_{\mathrm{to\_quartz}}) \, G_{\mathrm{age}}, \quad
+\partial_t \phi_q \mathrel{+}= \chi q_{\mathrm{to\_quartz}} \, G_{\mathrm{age}}.
+$$
+
+(At the PDE level the rates match this split; the code applies them via explicit IMEX updates with the same $G_{\mathrm{age}}$, and multiplies the increments by $\chi$; $G_{\mathrm{age}}$ itself is evaluated without a $\chi$ factor inside `_G_aging`.)
+
+**Phenomenological scope:** this is **not** an Arrhenius rate, has no
+explicit temperature dependence, and does not couple to grain size,
+surface area, or local crystallinity. The constant $k_{\mathrm{age}}$
+is a **dimensionless coupling** and does not map directly to a
+laboratory rate constant in s⁻¹ without a separate dimensional
+calibration that we do not provide.
+
+**Nucleation requirement (kinetic trap):** aging is implemented as an
+**explicit rate law applied after** the spectral Cahn–Hilliard update
+of $(\phi_m, \phi_c, \phi_q)$ — it is not a contribution to a chemical
+potential entering $\mu_\alpha$. As a consequence, the double-well bulk
+dynamics inside CH **competes with** the aging increment to $\phi_c$.
+
+Concretely: with **uniform** initial condition $\phi_m = 1$,
+$\phi_c = 0$, an aging step adds $+dt \cdot \chi G_{\mathrm{age}}$ uniformly
+to $\phi_c$. In the next CH step, the bulk derivative
+$\partial f / \partial \phi_c = 2 W \phi_c (1 - \phi_c)(1 - 2\phi_c)$
+evaluated at $\phi_c \approx 0^+$ is **positive**, pushing $\phi_c$ back
+toward the well minimum at 0. Spectral CH then diffuses this gradient,
+partially undoing the aging increment.
+
+Numerical observation: with the standard parameters
+$W = 1, \gamma = 4, k_{\mathrm{age}} = 0.01, c_{\mathrm{sat}} = 0.2$
+and uniform $\phi_m = 1, \phi_c = 0$, the effective conversion rate of
+$\phi_c$ is **~18%** of the rate $\phi_m$ decreases — i.e. the
+double-well "absorbs" most of the aging signal. The discrepancy is not
+a violation of mass conservation in the strict variational sense (the
+"missing" mass returns to the dissolved phase via secondary CH
+dynamics — see §10.10) but represents a **kinetic suppression** of
+homogeneous moganite-to-chalcedony transformation in the absence of
+chalcedony nuclei.
+
+**Geological interpretation:** real moganite-to-chalcedony aging in
+agates proceeds by **nucleation and growth**, not by homogeneous bulk
+transformation. Pre-existing chalcedony domains, structural
+heterogeneities, or grain boundaries provide nucleation sites where
+$\phi_c$ is locally above the well midpoint at $\phi_c = 0.5$, beyond
+which bulk dynamics drives further growth toward $\phi_c = 1$ rather
+than retraction to 0. The model captures this dichotomy: trapped
+trajectories without seeds, productive aging with seeds.
+
+**Practical configuration:** the canonical `closed_aging` and
+`open_aging` scenario presets initialise $\phi_c$ with a small seed
+density ($\phi_c^{\mathrm{init}} = 0.05$) and noise amplitude
+($\phi_c^{\mathrm{noise}} = 0.02$) sized so that local fluctuations
+exceed the well midpoint at $\phi_c = 0.5$ in some grid cells. This
+provides the nucleation sites that real geological systems would have
+from heterogeneity. Setting $\phi_c^{\mathrm{init}} = 0$ exactly is
+**numerically valid** but produces the trapped regime described above —
+useful for studying the kinetic trap itself but not for demonstrating
+moganite-to-chalcedony conversion.
+
+**Alternative formulation (not implemented):** aging could be made
+nucleation-independent by adding a **thermodynamic tilt** to the
+moganite double-well potential (`tilted_well` in `core/potentials.py`),
+which would shift the moganite minimum below 1 and let CH gradient flow
+drive the conversion variationally. This is intentionally **not** the
+default — explicit rate-law aging more cleanly maps to the
+phenomenological "kinetic conversion" picture in the geology
+literature, even at the cost of the nucleation requirement.
+
 ---
 
 ## 4. Double well and barrier confinement
@@ -439,6 +522,7 @@ Examples: **moganite–chalcedony anticorrelation** on the horizontal centreline
 - **Non-circular cavities** (Section 6.3): FFT anisotropy and other **$r<R$** masks use a scalar **`R`**; they are approximate when the physical cavity is elliptic, polygonal, wedge, or slot-shaped.
 - **No elasticity / fluid pressure:** the model omits elastic strain energy and explicit fluid pressure beyond what is encoded in prescribed $\sigma_{ij}$ and $c$; there are **no** explicit sharp grain-boundary interfaces beyond diffuse interfaces.
 - **Ratchet** (Section 3): a **phenomenological** kinetic tilt of Ostwald partitioning in a band of $\phi_m$ — **not** a calibrated multi-mineral rate law.
+- **Aging requires chalcedony nuclei** (Section 3.5): the explicit-rate aging update is suppressed by double-well bulk dynamics in the homogeneous $\phi_m = 1$, $\phi_c = 0$ limit. Canonical scenarios initialise with small seeds ($\phi_c^{\mathrm{init}} = 0.05$, noise $0.02$) to avoid the trapped regime. In that trap, the effective conversion rate of $\phi_c$ is observed to be **~18%** of the $\phi_m$ decay rate.
 - **Dimensionless formulation:** all lengths, times, diffusivities, and reaction constants are **dimensionless** unless an explicit map to SI units is introduced elsewhere.
 
 ---
