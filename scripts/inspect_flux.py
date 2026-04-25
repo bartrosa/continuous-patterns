@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from continuous_patterns.core.io import load_run_config
-from continuous_patterns.models import agate_ch
-from continuous_patterns.models.agate_ch import _compute_surface_flux_balance
+from continuous_patterns.models import cavity_reactive
+from continuous_patterns.models.cavity_reactive import _compute_surface_flux_balance
 
 
 def main() -> None:
@@ -48,7 +48,9 @@ def main() -> None:
         f"Simulating {cfg['experiment']['name']} "
         f"(T={cfg['time']['T']}, n={cfg['geometry']['n']})..."
     )
-    result = agate_ch.simulate(cfg, chunk_size=args.chunk_size, show_progress=args.show_progress)
+    result = cavity_reactive.simulate(
+        cfg, chunk_size=args.chunk_size, show_progress=args.show_progress
+    )
 
     flux = result.meta["flux_samples"]
     times = np.asarray(flux["times"])

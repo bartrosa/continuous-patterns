@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Reproduce canonical paper-v2 + new-geometry runs via ``continuous_patterns.experiments.run``.
+"""Reproduce per-feature demo runs via ``continuous_patterns.experiments.run``.
 
 Runs are driven as subprocesses (``uv run python -m …``) from the repository root
 so layered config paths and ``experiments/solver_settings.yaml`` resolve correctly.
 
 Environment:
 
-- ``CP_REPRODUCE_MINI=1`` — quick subset (core baselines + new cavity geometries) with
-  ``CP_OVERRIDE_T=250`` for a faster smoke check.
+- ``CP_REPRODUCE_MINI=1`` — four fast smokes (one per feature category) with
+  ``CP_OVERRIDE_T=250`` for a shorter check.
 - ``CP_OVERRIDE_T`` — optional horizon override (seconds); applied by ``run.py`` after load.
 - ``CP_LOG_LEVEL`` — passed as ``--log-level`` (default ``INFO``).
 - ``CP_NO_PROGRESS=1`` — adds ``--no-progress``.
@@ -24,31 +24,33 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 CANONICAL_DIR = _REPO_ROOT / "experiments" / "canonical"
 RESULTS_DIR = _REPO_ROOT / "results" / "canonical"
 
+# Fifteen production YAMLs under ``experiments/canonical/`` (one main demo per feature).
 CANONICAL_BASELINES = [
-    "no_pinning",
-    "ratchet_only",
     "medium_pinning",
-    "strong_pinning",
-    "medium_pinning_seed123",
-    "stress_uniform_biaxial",
-    "stress_flamant",
-    "agate_stage2_gamma_5",
+    "bulk_relaxation_gamma_5",
     "elliptic_pinning",
     "polygon_pinning",
     "wedge_pinning",
     "rectangular_slot_pinning",
+    "stress_lithostatic",
+    "stress_tectonic",
+    "stress_kirsch",
+    "stress_inglis",
+    "gravity_demo",
+    "scenario_closed_supersaturated",
+    "scenario_closed_aging",
+    "scenario_open_aging",
+    "scenario_bulk_relaxation",
+    "aging_demo",
 ]
 
 _mini = os.environ.get("CP_REPRODUCE_MINI", "").strip().lower()
 if _mini in {"1", "true", "yes"}:
     CANONICAL_BASELINES = [
-        "no_pinning",
         "medium_pinning",
-        "agate_stage2_gamma_5",
-        "elliptic_pinning",
-        "polygon_pinning",
-        "wedge_pinning",
-        "rectangular_slot_pinning",
+        "bulk_relaxation_gamma_5",
+        "stress_tectonic",
+        "scenario_closed_supersaturated",
     ]
     OVERRIDE_T = 250.0
 else:
