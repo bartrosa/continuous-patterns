@@ -5,13 +5,13 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from continuous_patterns.models.agate_ch import simulate
+from continuous_patterns.models.cavity_reactive import simulate
 
 
 def test_snapshot_count_matches_schedule() -> None:
     """T=10, dt=0.1 → 100 steps; snapshot_every=2 → steps 0,2,...,100 → 51 frames."""
     cfg = {
-        "experiment": {"name": "snap_test", "model": "agate_ch", "seed": 0},
+        "experiment": {"name": "snap_test", "model": "cavity_reactive", "seed": 0},
         "geometry": {"type": "circular_cavity", "L": 10.0, "R": 3.0, "n": 32},
         "physics": {
             "W": 1.0,
@@ -51,7 +51,7 @@ def test_snapshot_count_matches_schedule() -> None:
 
 def test_gif_snapshots_align_with_h5_when_both_on() -> None:
     cfg = {
-        "experiment": {"name": "snap_gif", "model": "agate_ch", "seed": 1},
+        "experiment": {"name": "snap_gif", "model": "cavity_reactive", "seed": 1},
         "geometry": {"type": "circular_cavity", "L": 8.0, "R": 2.0, "n": 16},
         "physics": {
             "W": 1.0,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -13,6 +14,7 @@ from pydantic import ValidationError
 from continuous_patterns.core.io import (
     allocate_run_dir,
     load_run_config,
+    resolve_model_name,
     save_final_state_npz,
     save_run_config,
     save_summary,
@@ -24,10 +26,50 @@ from continuous_patterns.core.plotting import (
 )
 
 
+def test_legacy_model_name_resolves_in_load_run_config(tmp_path: Path) -> None:
+    """``model: agate_ch`` in YAML is coerced to ``cavity_reactive`` with a warning."""
+    p = tmp_path / "legacy_model.yaml"
+    p.write_text(
+        """
+experiment:
+  name: demo
+  model: agate_ch
+  seed: 1
+geometry:
+  type: circular_cavity
+  L: 4.0
+  R: 1.5
+  n: 32
+physics:
+  W: 1.0
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+""",
+        encoding="utf-8",
+    )
+    with patch("continuous_patterns.core.io.logger") as log:
+        cfg = load_run_config(p)
+    assert cfg["experiment"]["model"] == "cavity_reactive"
+    log.warning.assert_called()
+
+
+def test_resolve_model_name_direct() -> None:
+    assert resolve_model_name("cavity_reactive") == "cavity_reactive"
+    with patch("continuous_patterns.core.io.logger") as log:
+        assert resolve_model_name("agate_ch") == "cavity_reactive"
+    log.warning.assert_called()
+
+
 def test_load_run_config_rejects_flat_yaml(tmp_path: Path) -> None:
     flat = tmp_path / "flat.yaml"
     flat.write_text(
-        yaml.safe_dump({"grid": 64, "L": 10.0, "model": "agate_ch"}),
+        yaml.safe_dump({"grid": 64, "L": 10.0, "model": "cavity_reactive"}),
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="experiment"):
@@ -41,7 +83,7 @@ def test_load_run_config_fills_output_from_defaults(tmp_path: Path) -> None:
         """
 experiment:
   name: demo
-  model: agate_ch
+  model: cavity_reactive
   seed: 1
 geometry:
   type: circular_cavity
@@ -75,7 +117,7 @@ def test_load_run_config_user_settings_override(tmp_path: Path) -> None:
         """
 experiment:
   name: demo
-  model: agate_ch
+  model: cavity_reactive
   seed: 1
 geometry:
   type: circular_cavity
@@ -109,7 +151,7 @@ def test_load_run_config_validates_nested_schema(tmp_path: Path) -> None:
         """
 experiment:
   name: demo
-  model: agate_ch
+  model: cavity_reactive
   seed: 1
 geometry:
   type: circular_cavity
@@ -132,7 +174,7 @@ output:
         encoding="utf-8",
     )
     cfg = load_run_config(p)
-    assert cfg["experiment"]["model"] == "agate_ch"
+    assert cfg["experiment"]["model"] == "cavity_reactive"
     assert cfg["geometry"]["n"] == 32
     assert cfg["physics"]["W"] == 1.0
 
@@ -146,7 +188,7 @@ def test_expensive_output_hard_disabled_by_default(
     yaml_body = """
 experiment:
   name: expensive_flags
-  model: agate_ch
+  model: cavity_reactive
   seed: 1
 geometry:
   type: circular_cavity
@@ -187,7 +229,7 @@ output:
 
 
 def test_allocate_run_dir_creates_timestamped_layout(tmp_path: Path) -> None:
-    rp = allocate_run_dir(experiment_name="agate_ch", results_root=tmp_path)
+    rp = allocate_run_dir(experiment_name="cavity_reactive", results_root=tmp_path)
     assert rp.root.is_dir()
     assert rp.summary_json == rp.root / "summary.json"
     assert rp.config_yaml == rp.root / "config.yaml"
@@ -195,7 +237,7 @@ def test_allocate_run_dir_creates_timestamped_layout(tmp_path: Path) -> None:
     assert rp.log_file == rp.root / "run.log"
     assert rp.snapshots_h5 == rp.root / "snapshots.h5"
     assert rp.jablczynski_plot == rp.root / "jablczynski.png"
-    assert rp.root.parent.name == "agate_ch"
+    assert rp.root.parent.name == "cavity_reactive"
 
 
 def test_save_summary_writes_valid_json(tmp_path: Path) -> None:
@@ -208,7 +250,7 @@ def test_save_summary_writes_valid_json(tmp_path: Path) -> None:
 
 def test_roundtrip_save_load_config_identical(tmp_path: Path) -> None:
     cfg = {
-        "experiment": {"name": "t1", "model": "agate_stage2", "seed": 7},
+        "experiment": {"name": "t1", "model": "bulk_relaxation", "seed": 7},
         "geometry": {"type": "circular_cavity", "L": 2.0, "R": 0.0, "n": 16},
         "physics": {"gamma": 2.0, "W": 1.0},
         "time": {"dt": 0.001, "T": 0.01, "snapshot_every": 5},
@@ -270,7 +312,7 @@ def test_plot_fields_final_includes_params_panel(tmp_path: Path) -> None:
     pc = rng.random((n, n))
     cc = rng.random((n, n))
     params = {
-        "experiment": {"model": "agate_ch", "name": "test"},
+        "experiment": {"model": "cavity_reactive", "name": "test"},
         "geometry": {"L": 1.0, "R": 0.2, "n": 12},
         "physics": {"gamma": 3.0, "kappa_x": 0.5, "kappa_y": 0.5, "use_ratchet": True},
         "stress": {"mode": "none", "sigma_0": 0.0, "stress_coupling_B": 0.0},
@@ -336,7 +378,7 @@ def _base_card(geometry_block: str) -> str:
     return f"""
 experiment:
   name: gtest
-  model: agate_ch
+  model: cavity_reactive
   seed: 1
 {geometry_block}
 physics:
@@ -469,3 +511,176 @@ geometry:
     p3.write_text(_base_card(bad_w), encoding="utf-8")
     with pytest.raises(ValidationError, match="R_inner"):
         load_run_config(p3)
+
+
+def _stress_card(*, geometry_block: str, stress_block: str) -> str:
+    return f"""
+experiment:
+  name: stest
+  model: cavity_reactive
+  seed: 1
+{geometry_block}
+physics:
+  W: 1.0
+{stress_block}
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+"""
+
+
+def test_stress_kirsch_requires_circular_cavity(tmp_path: Path) -> None:
+    geo = """
+geometry:
+  type: elliptic_cavity
+  L: 80.0
+  n: 32
+  a: 12.0
+  b: 8.0
+  theta: 0.0
+  eps_scale: 2.0
+"""
+    st = """
+stress:
+  mode: kirsch
+  S_xx_far: 1.0
+  S_yy_far: 0.0
+  stress_coupling_B: 0.0
+"""
+    p = tmp_path / "kirsch_e.yaml"
+    p.write_text(_stress_card(geometry_block=geo, stress_block=st), encoding="utf-8")
+    with pytest.raises(ValidationError, match="circular_cavity"):
+        load_run_config(p)
+
+
+def test_stress_inglis_requires_elliptic_cavity(tmp_path: Path) -> None:
+    geo = """
+geometry:
+  type: circular_cavity
+  L: 40.0
+  n: 32
+  R: 8.0
+  eps_scale: 2.0
+"""
+    st = """
+stress:
+  mode: inglis
+  S_xx_far: 1.0
+  S_yy_far: 0.3
+  stress_coupling_B: 0.0
+"""
+    p = tmp_path / "inglis_c.yaml"
+    p.write_text(_stress_card(geometry_block=geo, stress_block=st), encoding="utf-8")
+    with pytest.raises(ValidationError, match="elliptic_cavity"):
+        load_run_config(p)
+
+
+def test_stress_inglis_conflict_with_geometry_raises(tmp_path: Path) -> None:
+    geo = """
+geometry:
+  type: elliptic_cavity
+  L: 80.0
+  n: 32
+  a: 12.0
+  b: 8.0
+  theta: 0.0
+  eps_scale: 2.0
+"""
+    st = """
+stress:
+  mode: inglis
+  a: 99.0
+  S_xx_far: 1.0
+  S_yy_far: 0.0
+  stress_coupling_B: 0.0
+"""
+    p = tmp_path / "inglis_conflict.yaml"
+    p.write_text(_stress_card(geometry_block=geo, stress_block=st), encoding="utf-8")
+    with pytest.raises(ValidationError, match="conflicts"):
+        load_run_config(p)
+
+
+def test_stress_inglis_autofills_semi_axes_from_geometry(tmp_path: Path) -> None:
+    geo = """
+geometry:
+  type: elliptic_cavity
+  L: 80.0
+  n: 32
+  a: 12.0
+  b: 8.0
+  theta: 0.0
+  eps_scale: 2.0
+"""
+    st = """
+stress:
+  mode: inglis
+  S_xx_far: 1.0
+  S_yy_far: 0.0
+  S_xy_far: 0.0
+  stress_coupling_B: 0.0
+"""
+    p = tmp_path / "inglis_auto.yaml"
+    p.write_text(_stress_card(geometry_block=geo, stress_block=st), encoding="utf-8")
+    cfg = load_run_config(p)
+    assert cfg["stress"]["a"] == pytest.approx(12.0)
+    assert cfg["stress"]["b"] == pytest.approx(8.0)
+
+
+def test_pore_pressure_negative_p0_rejected(tmp_path: Path) -> None:
+    geo = """
+geometry:
+  type: circular_cavity
+  L: 40.0
+  n: 32
+  R: 8.0
+  eps_scale: 2.0
+"""
+    st = """
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+  pore_pressure:
+    field: uniform
+    p0: -0.1
+    biot_alpha: 1.0
+"""
+    p = tmp_path / "pp_bad.yaml"
+    p.write_text(_stress_card(geometry_block=geo, stress_block=st), encoding="utf-8")
+    with pytest.raises(ValidationError):
+        load_run_config(p)
+
+
+def test_initial_scenario_sets_experiment_scenario_metadata(tmp_path: Path) -> None:
+    p = tmp_path / "scen_meta.yaml"
+    p.write_text(
+        """
+experiment:
+  name: scen_demo
+  model: cavity_reactive
+  seed: 1
+geometry:
+  type: circular_cavity
+  L: 40.0
+  n: 32
+  R: 8.0
+  eps_scale: 2.0
+physics:
+  W: 1.0
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+initial:
+  scenario: open_inflow
+""",
+        encoding="utf-8",
+    )
+    cfg = load_run_config(p)
+    assert cfg["experiment"]["scenario"] == "open_inflow"
+    assert cfg["initial"]["scenario"] == "open_inflow"

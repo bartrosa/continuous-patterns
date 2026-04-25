@@ -9,13 +9,17 @@ import pytest
 from continuous_patterns.core.spectral import divergence_real, grad_real, k_vectors, laplacian_real
 from continuous_patterns.core.stress import (
     STRESS_BUILDERS,
+    apply_pore_pressure,
     flamant_two_point,
+    inglis,
     kirsch,
+    lithostatic,
     none,
     pressure_gradient,
     pure_shear,
     stress_contribution_to_mu,
     stress_mu_hat,
+    tectonic_far_field,
     uniform_biaxial,
     uniform_uniaxial,
 )
@@ -58,6 +62,10 @@ def test_all_builders_shapes() -> None:
         lambda: pure_shear(L=L, n=n, sigma_0=0.3),
         lambda: flamant_two_point(L=L, R=R, n=n, sigma_0=0.25),
         lambda: pressure_gradient(L=L, n=n, sigma_0=0.2),
+        lambda: lithostatic(L=L, n=n, rho_g_dim=0.01, lateral_K=0.5),
+        lambda: tectonic_far_field(L=L, n=n, S_H=1.0, S_h=0.4, S_V=0.7, theta_SH=0.1),
+        lambda: kirsch(L=L, R=R, n=n, S_xx_far=1.0, S_yy_far=0.2, S_xy_far=0.05),
+        lambda: inglis(L=L, n=n, a=R, b=R, theta=0.0, S_xx_far=1.0, S_yy_far=0.0),
     ]
     for b in builders:
         sxx, syy, sxy = b()
@@ -121,11 +129,97 @@ def test_pressure_gradient_linearity_and_isotropy() -> None:
     assert float(sxx[0, j_lo]) == pytest.approx(s0, rel=0, abs=2.0 * s0 * dx / L)
 
 
-def test_kirsch_and_builder_raise() -> None:
-    with pytest.raises(NotImplementedError):
-        kirsch(L=10.0, R=2.0, n=16, sigma_0=0.1)
-    with pytest.raises(NotImplementedError):
-        STRESS_BUILDERS["kirsch"](L=10.0, R=2.0, n=16, sigma_0=0.1)
+def test_kirsch_far_field_asymptotic() -> None:
+    """At large ``r``, ``σ`` approaches the remote tensor (Kirsch)."""
+    L, R, n = 200.0, 20.0, 256
+    sxx, syy, sxy = kirsch(
+        L=L, R=R, n=n, S_xx_far=1.0, S_yy_far=0.3, S_xy_far=0.1, dtype=jnp.float64
+    )
+    dx = L / n
+    ii = jnp.arange(n, dtype=jnp.float64)[:, None]
+    jj = jnp.arange(n, dtype=jnp.float64)[None, :]
+    x = (ii + 0.5) * dx
+    y = (jj + 0.5) * dx
+    xc = 0.5 * L
+    yc = 0.5 * L
+    r = jnp.sqrt((x - xc) ** 2 + (y - yc) ** 2)
+    r_max = jnp.max(r)
+    mask = r > 0.85 * r_max
+    assert float(jnp.max(jnp.abs(sxx - 1.0)[mask])) < 0.1
+    assert float(jnp.max(jnp.abs(syy - 0.3)[mask])) < 0.1
+    assert float(jnp.max(jnp.abs(sxy - 0.1)[mask])) < 0.1
+
+
+def test_kirsch_builder_dispatch() -> None:
+    sxx, syy, sxy = STRESS_BUILDERS["kirsch"](
+        L=10.0, R=2.0, n=32, S_xx_far=-0.2, S_yy_far=0.4, S_xy_far=0.0
+    )
+    ref = kirsch(L=10.0, R=2.0, n=32, S_xx_far=-0.2, S_yy_far=0.4, S_xy_far=0.0)
+    for a, b in zip((sxx, syy, sxy), ref, strict=True):
+        assert jnp.allclose(a, b)
+
+
+def test_lithostatic_compression_and_hydrostatic() -> None:
+    L, n = 10.0, 64
+    sxx, syy, sxy = lithostatic(L=L, n=n, rho_g_dim=0.02, lateral_K=0.5)
+    assert jnp.all(syy < 0)
+    assert jnp.all(sxx < 0)
+    assert jnp.allclose(sxy, 0.0)
+    sxx1, syy1, sxy1 = lithostatic(L=L, n=n, rho_g_dim=0.02, lateral_K=1.0)
+    assert jnp.allclose(sxx1, syy1)
+    assert jnp.allclose(sxy1, 0.0)
+
+
+def test_tectonic_far_field_rotation() -> None:
+    L, n = 12.0, 48
+    sxx, syy, sxy = tectonic_far_field(
+        L=L, n=n, S_H=1.1, S_h=0.2, S_V=0.5, theta_SH=0.0, dtype=jnp.float64
+    )
+    assert jnp.allclose(sxx, 1.1)
+    assert jnp.allclose(syy, 0.2)
+    assert jnp.allclose(sxy, 0.0)
+    th = jnp.pi / 4.0
+    sx, sy, sxy45 = tectonic_far_field(
+        L=L, n=n, S_H=2.0, S_h=1.0, S_V=0.0, theta_SH=float(th), dtype=jnp.float64
+    )
+    c = float(jnp.cos(th))
+    s = float(jnp.sin(th))
+    ex = 2.0 * c * c + 1.0 * s * s
+    ey = 2.0 * s * s + 1.0 * c * c
+    exy = (2.0 - 1.0) * c * s
+    assert jnp.allclose(sx, ex)
+    assert jnp.allclose(sy, ey)
+    assert jnp.allclose(sxy45, exy)
+
+
+def test_inglis_circle_matches_kirsch() -> None:
+    L, R, n = 50.0, 12.0, 128
+    a = inglis(
+        L=L,
+        n=n,
+        a=R,
+        b=R,
+        theta=0.0,
+        S_xx_far=1.0,
+        S_yy_far=0.0,
+        S_xy_far=0.0,
+        dtype=jnp.float32,
+    )
+    k = kirsch(L=L, R=R, n=n, S_xx_far=1.0, S_yy_far=0.0, S_xy_far=0.0, dtype=jnp.float32)
+    for u, v in zip(a, k, strict=True):
+        assert jnp.allclose(u, v, atol=1e-5, rtol=1e-4)
+
+
+def test_apply_pore_pressure_biot() -> None:
+    n = 8
+    sxx = jnp.ones((n, n))
+    syy = 2.0 * jnp.ones((n, n))
+    sxy = 0.5 * jnp.ones((n, n))
+    p = 0.25 * jnp.ones((n, n))
+    ox, oy, oxy = apply_pore_pressure(sxx, syy, sxy, p_pore=p, biot_alpha=0.8)
+    assert jnp.allclose(ox, 1.0 - 0.8 * 0.25)
+    assert jnp.allclose(oy, 2.0 - 0.8 * 0.25)
+    assert jnp.allclose(oxy, 0.5)
 
 
 def test_stress_mu_hat_pure_shear_matches_mixed_derivative() -> None:

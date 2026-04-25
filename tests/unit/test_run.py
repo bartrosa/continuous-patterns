@@ -15,7 +15,7 @@ _TEMPLATES_DIR = _REPO_ROOT / "experiments" / "canonical"
 
 def _minimal_agate_ch_cfg() -> dict:
     return {
-        "experiment": {"name": "unit_agate", "model": "agate_ch", "seed": 0},
+        "experiment": {"name": "unit_agate", "model": "cavity_reactive", "seed": 0},
         "geometry": {"type": "circular_cavity", "L": 6.0, "R": 2.0, "n": 24},
         "physics": {
             "W": 1.0,
@@ -138,7 +138,7 @@ def test_templates_load_successfully() -> None:
     """Shipped canonical YAMLs under ``experiments/canonical/`` pass ``load_run_config``."""
     assert _TEMPLATES_DIR.is_dir()
     templates = sorted(_TEMPLATES_DIR.glob("*.yaml"))
-    assert len(templates) == 13
+    assert len(templates) == 16
     for tmpl in templates:
         cfg = load_run_config(tmpl)
-        assert cfg["experiment"]["model"] in ("agate_ch", "agate_stage2")
+        assert cfg["experiment"]["model"] in ("cavity_reactive", "bulk_relaxation")
