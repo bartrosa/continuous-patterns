@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from continuous_patterns.core.io import (
     allocate_run_dir,
@@ -329,3 +330,142 @@ def test_write_evolution_gif_writes_file(tmp_path: Path) -> None:
 def test_parse_run_stamp_utc() -> None:
     assert parse_run_stamp_utc("20260424T105328Z") == "2026-04-24 10:53 UTC"
     assert parse_run_stamp_utc("not-a-stamp") is None
+
+
+def _base_card(geometry_block: str) -> str:
+    return f"""
+experiment:
+  name: gtest
+  model: agate_ch
+  seed: 1
+{geometry_block}
+physics:
+  W: 1.0
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+"""
+
+
+def test_geometry_spec_elliptic_and_slot_load(tmp_path: Path) -> None:
+    for block in (
+        """
+geometry:
+  type: elliptic_cavity
+  L: 40.0
+  n: 32
+  a: 8.0
+  b: 6.0
+  theta: 0.1
+  eps_scale: 2.0
+""",
+        """
+geometry:
+  type: rectangular_slot
+  L: 100.0
+  n: 32
+  width: 20.0
+  height: 10.0
+  theta: 0.0
+  eps_scale: 2.0
+""",
+    ):
+        p = tmp_path / "g.yaml"
+        p.write_text(_base_card(block), encoding="utf-8")
+        cfg = load_run_config(p)
+        assert cfg["geometry"]["type"] in ("elliptic_cavity", "rectangular_slot")
+
+
+def test_geometry_spec_wedge_and_polygon_load(tmp_path: Path) -> None:
+    poly = """
+geometry:
+  type: polygon_cavity
+  L: 100.0
+  n: 32
+  n_sides: 5
+  R: 15.0
+  theta_offset: 0.0
+  eps_scale: 2.0
+"""
+    p1 = tmp_path / "poly.yaml"
+    p1.write_text(_base_card(poly), encoding="utf-8")
+    assert load_run_config(p1)["geometry"]["n_sides"] == 5
+
+    wedge = """
+geometry:
+  type: wedge_cavity
+  L: 200.0
+  n: 32
+  R_inner: 5.0
+  R_outer: 40.0
+  opening_angle: 1.2
+  theta_center: 0.0
+  eps_scale: 2.0
+"""
+    p2 = tmp_path / "wedge.yaml"
+    p2.write_text(_base_card(wedge), encoding="utf-8")
+    assert load_run_config(p2)["geometry"]["R_outer"] == 40.0
+
+
+def test_geometry_spec_missing_required_raises(tmp_path: Path) -> None:
+    bad_elliptic = """
+geometry:
+  type: elliptic_cavity
+  L: 40.0
+  n: 32
+  a: 8.0
+  eps_scale: 2.0
+"""
+    p = tmp_path / "bad_e.yaml"
+    p.write_text(_base_card(bad_elliptic), encoding="utf-8")
+    with pytest.raises(ValidationError, match="b"):
+        load_run_config(p)
+
+
+def test_geometry_spec_polygon_exclusive_and_wedge_order(tmp_path: Path) -> None:
+    both = """
+geometry:
+  type: polygon_cavity
+  L: 100.0
+  n: 32
+  n_sides: 6
+  R: 10.0
+  vertices: [[20, 20], [30, 20], [30, 30]]
+  eps_scale: 2.0
+"""
+    p = tmp_path / "both.yaml"
+    p.write_text(_base_card(both), encoding="utf-8")
+    with pytest.raises(ValidationError, match="exclusively"):
+        load_run_config(p)
+
+    neither = """
+geometry:
+  type: polygon_cavity
+  L: 100.0
+  n: 32
+  eps_scale: 2.0
+"""
+    p2 = tmp_path / "neither.yaml"
+    p2.write_text(_base_card(neither), encoding="utf-8")
+    with pytest.raises(ValidationError, match="exclusively"):
+        load_run_config(p2)
+
+    bad_w = """
+geometry:
+  type: wedge_cavity
+  L: 200.0
+  n: 32
+  R_inner: 40.0
+  R_outer: 20.0
+  opening_angle: 1.0
+  eps_scale: 2.0
+"""
+    p3 = tmp_path / "bad_w.yaml"
+    p3.write_text(_base_card(bad_w), encoding="utf-8")
+    with pytest.raises(ValidationError, match="R_inner"):
+        load_run_config(p3)

@@ -16,7 +16,7 @@ help:
 	@echo "  make regen              regenerate ALL canonical runs (serial)"
 	@echo "  make regen-one E=name   regen single experiment by name"
 	@echo "                          (e.g. make regen-one E=medium_pinning)"
-	@echo "  make mini               quick subset regen at shorter horizon"
+	@echo "  make mini               quick smoke: core baselines + new cavity geometries (T=250)"
 	@echo "  make canonical          full regen + REGENERATION_REPORT.md"
 	@echo "  make inspect E=name     inspect flux_samples diagnostic"
 	@echo "  make clean-results      rm -rf results/"

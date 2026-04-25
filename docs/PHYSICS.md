@@ -171,6 +171,8 @@ so that $\delta\mu_m^{\mathrm{stress}} - \delta\mu_c^{\mathrm{stress}} = \mu_{\m
 
 **Cell-centred periodic grid:** $n \times n$ points, spacing $\Delta x = L/n$. Default production setup in this project: $n=512$, $L=200$, hence $\Delta x = 200/512$.
 
+The formulas below are the **reference circular** cavity; **elliptic, polygonal, wedge, and rectangular-slot** cavities use the same **smooth $\chi$ / rim / accounting** contract with generalized distances (§6.3).
+
 **Radial distance** from cavity centre $(L/2, L/2)$: $r = \|\mathbf{x} - \mathbf{x}_c\|$.
 
 **Cavity indicator $\chi$:** smooth tanh transition at $r = R$,
@@ -204,6 +206,20 @@ Stage II is a **second, distinct** continuum model used for **long-time post-for
 **Physical interpretation (paper narrative):** **isothermal relaxation** of polymorph texture on **geological** time scales after primary pattern formation — an “aging” or **ordering** stage without ongoing precipitation chemistry in this idealization.
 
 **Key empirical result (Experiment 2):** concentric **Stage I** banding patterns were reported **stable** under a **longer-horizon** Stage II integration. The repository run cards use **`configs/agate_ch/stage_sequence/run_a_stage1.yaml`** with `time.T_total: 10000.0` and **`configs/agate_ch/stage_sequence/run_b_long.yaml`** with `time.T_total: 100000.0` at the same `dt` — i.e. a **10×** longer configured end time for Run B than Run A (not 100×). Cite those paths and your archived `summary.json` / figures when stating the factor in the paper; if you compare against a different Stage I horizon, recompute the ratio explicitly.
+
+### 6.3 Non-circular cavity families (Stage I, same PDE mask contract)
+
+The **reaction–diffusion + CH + rim** Stage I equations are unchanged; only the **indicator $\chi$**, **rim mask**, and **accounting band** are built from a **generalized boundary distance** or equivalent surrogate instead of the radial profile in §6.1. In all cases the transition uses the same **$\tanh$ width** scaling with $\Delta x$ (and the same floor on $\varepsilon$ as in §6.1) so the masks remain smooth for the pseudospectral grid.
+
+**Elliptic cavity** — centred at $(L/2, L/2)$ with semi-axes $a$, $b$ and optional rotation $\theta$. Define $F = (x'/a)^2 + (y'/b)^2$ in rotated coordinates and an effective radial coordinate $r_{\mathrm{eff}} = \sqrt{F}\,\sqrt{ab}$ so that $r_{\mathrm{eff}} = \sqrt{ab}$ on the ellipse. Then $\chi = \tfrac{1}{2}\bigl(1 - \tanh((r_{\mathrm{eff}} - \sqrt{ab})/\varepsilon)\bigr)$; the Gaussian **ring** is centred on the same iso-curve. **Accounting** uses a band $r_{\mathrm{eff}} \in [\sqrt{ab} - 2\Delta x,\, \sqrt{ab})$.
+
+**Polygon cavity** — either a **regular** polygon ($n_{\mathrm{sides}}$, circumradius $R$) or **explicit vertices** (CCW, domain coordinates). **Signed distance** $d$ to edges is negative inside, positive outside (ray parity for the sign; Euclidean distance to the boundary). Then $\chi = \tfrac{1}{2}(1 - \tanh(d/\varepsilon))$; **ring** peaks near $d = 0$; **accounting** flags $d \in [-2\Delta x, 0)$. A scalar **$R_{\mathrm{eff}} = \sqrt{A/\pi}$** from the polygon area is stored for metadata.
+
+**Wedge (annular sector)** — intersection of an annulus $R_{\mathrm{inner}} < r < R_{\mathrm{outer}}$ and an angular sector of full opening angle about bisector $\theta_{\mathrm{center}}$. **$\chi$** is a smooth product of radial $\tanh$ factors and an angular $\tanh$ window. **Rim** delivery is concentrated on the **outer** circular arc inside the sector (fracture-inlet narrative). **$R_{\mathrm{eff}}$** follows $\sqrt{(\mathrm{sector\ area})/\pi}$.
+
+**Rectangular slot** — centred slot with **width**, **height**, optional rotation $\theta$; **signed box distance** $d$ (max of axis-aligned offsets from half-extents) is negative inside. Same $\chi(d)$ and **ring**$(d)$ pattern as the polygon case; accounting uses $d \in [-2\Delta x, 0)$.
+
+**Diagnostics caveat:** radial distance **`rv`** in code remains **Euclidean** from $(L/2, L/2)$ for every builder. Metrics that assume a **circular** cavity (e.g. hard disk $r < R$ in §10.5, horizontal **Jabłczyński** slice in §10.7) remain **defined** using the stored scalar **`R`** (effective length) but may be **less aligned** with the true non-circular boundary than for the circular reference — interpret those scalars as **coarse** morphology probes, not exact geometric moments of the soft mask.
 
 ---
 
@@ -420,6 +436,7 @@ Examples: **moganite–chalcedony anticorrelation** on the horizontal centreline
 - **Barrier + hard clip** (Section 4): not a strict variational $\phi \in [0,1]$ surface-phase model.
 - **Kirsch mode** (Section 7.6): toy σ-field, not inclusion theory in the cavity.
 - **Canonical Jabłczyński** (Section 10.7): horizontal bias — do not over-interpret vertical textures through this scalar alone.
+- **Non-circular cavities** (Section 6.3): FFT anisotropy and other **$r<R$** masks use a scalar **`R`**; they are approximate when the physical cavity is elliptic, polygonal, wedge, or slot-shaped.
 - **No elasticity / fluid pressure:** the model omits elastic strain energy and explicit fluid pressure beyond what is encoded in prescribed $\sigma_{ij}$ and $c$; there are **no** explicit sharp grain-boundary interfaces beyond diffuse interfaces.
 - **Ratchet** (Section 3): a **phenomenological** kinetic tilt of Ostwald partitioning in a band of $\phi_m$ — **not** a calibrated multi-mineral rate law.
 - **Dimensionless formulation:** all lengths, times, diffusivities, and reaction constants are **dimensionless** unless an explicit map to SI units is introduced elsewhere.
@@ -428,8 +445,8 @@ Examples: **moganite–chalcedony anticorrelation** on the horizontal centreline
 
 ## 11. Summary
 
-We solve a **reaction-coupled anisotropic Model C** system for $(c,\phi_m,\phi_c)$ in a periodic square with a **smooth circular cavity**, **rim Dirichlet** control of $c$, **double-well + outer barrier** for $\phi_\alpha$, optional **ratcheted Ostwald partitioning**, and optional **ψ-split stress coupling** $\mathcal{F}_{\mathrm{stress}} \propto (\nabla\psi)^\top \sigma (\nabla\psi)$ implemented as $\mu_{\mathrm{stress}} = -B\nabla\cdot(\sigma\nabla\psi)$ with the $(\pm\tfrac12)$ split between $(\phi_m,\phi_c)$. A separate **Stage II** bulk CH model removes reaction and cavity physics for long-time relaxation studies. **Pseudospectral IMEX** time stepping is used; **no explicit spectral dealiasing** is currently applied. **Empirical σ-limits**, **Phase 3 calibration**, **mass diagnostics (§10.1–10.3)**, and **ψ vs κ-anisotropy** distinctions should accompany any figure caption comparing mechanisms.
+We solve a **reaction-coupled anisotropic Model C** system for $(c,\phi_m,\phi_c)$ in a periodic square with a **smooth cavity** — **circular** (§6.1) or **non-circular** families (§6.3: ellipse, polygon, annular wedge, rectangular slot) sharing the same **rim Dirichlet** idea for $c$, **double-well + outer barrier** for $\phi_\alpha$, optional **ratcheted Ostwald partitioning**, and optional **ψ-split stress coupling** $\mathcal{F}_{\mathrm{stress}} \propto (\nabla\psi)^\top \sigma (\nabla\psi)$ implemented as $\mu_{\mathrm{stress}} = -B\nabla\cdot(\sigma\nabla\psi)$ with the $(\pm\tfrac12)$ split between $(\phi_m,\phi_c)$. A separate **Stage II** bulk CH model removes reaction and cavity physics for long-time relaxation studies. **Pseudospectral IMEX** time stepping is used; **no explicit spectral dealiasing** is currently applied. **Empirical σ-limits**, **Phase 3 calibration**, **mass diagnostics (§10.1–10.3)**, and **ψ vs κ-anisotropy** distinctions should accompany any figure caption comparing mechanisms.
 
 ---
 
-*Document version: post-NOTES merge — includes Option D/C/B mass validation (§10.1–10.3; Option B = v1 bilinear circle + $2\Delta x$ stencil), optional `map_coordinates` elsewhere, labyrinth heuristic, and dimensionless-scope notes ported from legacy reviewer notes.*
+*Document version: post-NOTES merge — includes Option D/C/B mass validation (§10.1–10.3; Option B = v1 bilinear circle + $2\Delta x$ stencil), optional `map_coordinates` elsewhere, labyrinth heuristic, dimensionless-scope notes ported from legacy reviewer notes, and **§6.3** non-circular cavity mask narrative.*

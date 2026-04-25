@@ -45,15 +45,180 @@ class ExperimentSpec(BaseModel):
 
 
 class GeometrySpec(BaseModel):
-    """Domain and cavity grid (Stage II bulk may set ``R: 0``)."""
+    """Domain and cavity grid (Stage II bulk may set ``R: 0`` on ``circular_cavity``)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["circular_cavity"] = "circular_cavity"
+    type: Literal[
+        "circular_cavity",
+        "elliptic_cavity",
+        "polygon_cavity",
+        "wedge_cavity",
+        "rectangular_slot",
+    ] = "circular_cavity"
     L: float = Field(gt=0)
-    R: float = Field(ge=0)
     n: int = Field(gt=0)
     eps_scale: float = Field(default=2.0, gt=0)
+    R: float | None = None
+    a: float | None = None
+    b: float | None = None
+    theta: float | None = None
+    width: float | None = None
+    height: float | None = None
+    n_sides: int | None = None
+    vertices: list[list[float]] | None = None
+    theta_offset: float | None = None
+    R_inner: float | None = None
+    R_outer: float | None = None
+    opening_angle: float | None = None
+    theta_center: float | None = None
+
+    @model_validator(mode="after")
+    def _geometry_required_fields(self) -> Self:
+        t = self.type
+        missing: list[str] = []
+
+        def forbid(keys: frozenset[str], label: str) -> None:
+            data = self.model_dump()
+            bad = [k for k in keys if data.get(k) is not None]
+            if bad:
+                raise ValueError(f"geometry.type={label!r} must not set: {sorted(bad)}")
+
+        if t == "circular_cavity":
+            forbid(
+                frozenset(
+                    {
+                        "a",
+                        "b",
+                        "theta",
+                        "width",
+                        "height",
+                        "n_sides",
+                        "vertices",
+                        "theta_offset",
+                        "R_inner",
+                        "R_outer",
+                        "opening_angle",
+                        "theta_center",
+                    }
+                ),
+                "circular_cavity",
+            )
+            if self.R is None:
+                missing.append("R")
+            elif self.R < 0:
+                raise ValueError("geometry.R must be >= 0 for circular_cavity")
+        elif t == "elliptic_cavity":
+            forbid(
+                frozenset(
+                    {
+                        "R",
+                        "width",
+                        "height",
+                        "n_sides",
+                        "vertices",
+                        "theta_offset",
+                        "R_inner",
+                        "R_outer",
+                        "opening_angle",
+                    }
+                ),
+                "elliptic_cavity",
+            )
+            if self.a is None:
+                missing.append("a")
+            if self.b is None:
+                missing.append("b")
+        elif t == "polygon_cavity":
+            forbid(
+                frozenset(
+                    {
+                        "a",
+                        "b",
+                        "theta",
+                        "width",
+                        "height",
+                        "R_inner",
+                        "R_outer",
+                        "opening_angle",
+                        "theta_center",
+                    }
+                ),
+                "polygon_cavity",
+            )
+            reg = self.n_sides is not None and self.R is not None
+            expl = self.vertices is not None
+            if reg == expl:
+                raise ValueError(
+                    "geometry.type='polygon_cavity' requires either (n_sides and R) "
+                    "or vertices, exclusively"
+                )
+            if expl:
+                for i, p in enumerate(self.vertices or []):
+                    if len(p) != 2:
+                        raise ValueError(f"geometry.vertices[{i}] must be [x, y]")
+        elif t == "wedge_cavity":
+            forbid(
+                frozenset(
+                    {
+                        "R",
+                        "a",
+                        "b",
+                        "theta",
+                        "width",
+                        "height",
+                        "n_sides",
+                        "vertices",
+                        "theta_offset",
+                    }
+                ),
+                "wedge_cavity",
+            )
+            if self.R_inner is None:
+                missing.append("R_inner")
+            if self.R_outer is None:
+                missing.append("R_outer")
+            if self.opening_angle is None:
+                missing.append("opening_angle")
+            if (
+                self.R_inner is not None
+                and self.R_outer is not None
+                and not (0.0 < self.R_inner < self.R_outer)
+            ):
+                raise ValueError("wedge_cavity requires R_inner < R_outer (both > 0)")
+            if self.opening_angle is not None and not (
+                0.0 < self.opening_angle <= 2.0 * math.pi + 1e-9
+            ):
+                raise ValueError("wedge_cavity opening_angle must be in (0, 2π]")
+        elif t == "rectangular_slot":
+            forbid(
+                frozenset(
+                    {
+                        "R",
+                        "a",
+                        "b",
+                        "n_sides",
+                        "vertices",
+                        "theta_offset",
+                        "R_inner",
+                        "R_outer",
+                        "opening_angle",
+                        "theta_center",
+                    }
+                ),
+                "rectangular_slot",
+            )
+            if self.width is None:
+                missing.append("width")
+            if self.height is None:
+                missing.append("height")
+
+        if missing:
+            raise ValueError(
+                f"geometry.type={t!r} missing required field(s): {missing} "
+                f"(see docs for required keys per type)"
+            )
+        return self
 
 
 class StressSpec(BaseModel):

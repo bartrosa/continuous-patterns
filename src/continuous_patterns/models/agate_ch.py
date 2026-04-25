@@ -81,14 +81,38 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
         raise ValueError(f"Unknown geometry.type {gtype!r}; allowed: {sorted(MASK_BUILDERS)}")
 
     L = float(_require(gcfg, "L", where="config.geometry"))
-    R = float(_require(gcfg, "R", where="config.geometry"))
     n = int(_require(gcfg, "n", where="config.geometry"))
     eps_scale = float(gcfg.get("eps_scale", 2.0))
 
     dtype = jnp.float64 if cfg.get("precision") == "float64" else jnp.float32
 
     builder = MASK_BUILDERS[gtype]
-    m = builder(L=L, R=R, n=n, eps_scale=eps_scale, dtype=dtype)
+    gkwargs: dict[str, Any] = {"L": L, "n": n, "eps_scale": eps_scale, "dtype": dtype}
+    if gtype == "circular_cavity":
+        gkwargs["R"] = float(_require(gcfg, "R", where="config.geometry"))
+    elif gtype == "elliptic_cavity":
+        gkwargs["a"] = float(_require(gcfg, "a", where="config.geometry"))
+        gkwargs["b"] = float(_require(gcfg, "b", where="config.geometry"))
+        gkwargs["theta"] = float(gcfg.get("theta", 0.0))
+    elif gtype == "polygon_cavity":
+        if gcfg.get("vertices") is not None:
+            gkwargs["vertices"] = gcfg["vertices"]
+        else:
+            gkwargs["n_sides"] = int(_require(gcfg, "n_sides", where="config.geometry"))
+            gkwargs["R"] = float(_require(gcfg, "R", where="config.geometry"))
+            gkwargs["theta_offset"] = float(gcfg.get("theta_offset", 0.0))
+    elif gtype == "wedge_cavity":
+        gkwargs["R_inner"] = float(_require(gcfg, "R_inner", where="config.geometry"))
+        gkwargs["R_outer"] = float(_require(gcfg, "R_outer", where="config.geometry"))
+        gkwargs["opening_angle"] = float(_require(gcfg, "opening_angle", where="config.geometry"))
+        gkwargs["theta_center"] = float(gcfg.get("theta_center", 0.0))
+    elif gtype == "rectangular_slot":
+        gkwargs["width"] = float(_require(gcfg, "width", where="config.geometry"))
+        gkwargs["height"] = float(_require(gcfg, "height", where="config.geometry"))
+        gkwargs["theta"] = float(gcfg.get("theta", 0.0))
+    else:
+        raise AssertionError(f"unhandled geometry.type {gtype!r}")
+    m = builder(**gkwargs)
 
     k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
 
@@ -98,7 +122,7 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
         raise ValueError(f"Unknown stress.mode {smode!r}; allowed: {sorted(STRESS_BUILDERS)}")
     skwargs: dict[str, Any] = {"L": L, "n": n, "dtype": dtype}
     if smode in ("flamant_two_point", "kirsch"):
-        skwargs["R"] = R
+        skwargs["R"] = float(m["R"])
     # ``stress_eps_factor``: validated on the stress block; only Flamant builder uses it.
     _skip = frozenset({"mode", "stress_coupling_B", "stress_eps_factor", "dtype"})
     for k, v in st.items():
@@ -677,6 +701,7 @@ def simulate(
     gif_snapshots: list[tuple[float, np.ndarray]] = []
 
     meta: dict[str, Any] = {
+        "effective_cavity_R": float(geom.R),
         "flux_samples": {
             "times": [],
             "M_dissolved": [],

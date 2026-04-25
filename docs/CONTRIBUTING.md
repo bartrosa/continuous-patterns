@@ -26,10 +26,10 @@ See [ARCHITECTURE.md §2.8](ARCHITECTURE.md). In short:
 
 ### New geometry
 
-1. Add `def my_masks(*, L, R, n, ...) -> dict[str, Array | float | int]:` in `core/masks.py` (same keys as `circular_cavity_masks`).
-2. `MASK_BUILDERS["my_geometry"] = my_masks`.
-3. Extend `GeometrySpec.type` in `core/io.py`.
-4. Template YAML under `experiments/canonical/`.
+1. Add `def my_masks(*, L, R, n, ...) -> dict[str, Array | float | int]:` in `core/masks.py` (same keys as `circular_cavity_masks`). Reuse or extend `core/_geometry_helpers.py` for shared distance / grid utilities when useful.
+2. `MASK_BUILDERS["my_geometry"] = my_masks` (key must match `geometry.type`).
+3. Extend `GeometrySpec.type` and `_geometry_required_fields` in `core/io.py`.
+4. Template YAML under `experiments/canonical/`; document the shape briefly in **`docs/PHYSICS.md` §6.3** if it is a new family.
 
 ### New solid phase (beyond moganite / chalcedony)
 
