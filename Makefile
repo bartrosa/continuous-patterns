@@ -16,7 +16,7 @@ help:
 	@echo "  make regen              regenerate ALL canonical runs (serial)"
 	@echo "  make regen-one E=name   regen single experiment by name"
 	@echo "                          (e.g. make regen-one E=medium_pinning)"
-	@echo "  make mini               quick smoke: core baselines + new cavity geometries (T=250)"
+	@echo "  make mini               smoke: 4 canonical demos (T=250 override)"
 	@echo "  make canonical          full regen + REGENERATION_REPORT.md"
 	@echo "  make inspect E=name     inspect flux_samples diagnostic"
 	@echo "  make clean-results      rm -rf results/"
@@ -61,7 +61,7 @@ inspect:
 	  echo "Usage: make inspect E=<experiment_name>"; \
 	  exit 1; \
 	fi
-	$(PYTHON) scripts/inspect_flux_samples.py \
+	$(PYTHON) scripts/inspect_flux.py \
 	  --config $(CANONICAL_DIR)/$(E).yaml
 
 clean-results:
