@@ -15,11 +15,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 import numpy as np
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from continuous_patterns.core.plotting import plot_fields_final
 
@@ -81,6 +81,55 @@ class TimeSpec(BaseModel):
     snapshot_every: int = Field(default=500, ge=1)
 
 
+class PhaseSpec(BaseModel):
+    """One crystalline phase: bulk potential dispatch + CH mobility / bookkeeping."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    potential: Literal["double_well", "tilted_well", "asymmetric_well", "zero"] = "double_well"
+    potential_kwargs: dict[str, float] = Field(default_factory=dict)
+    mobility: float = 1.0
+    rho: float = 1.0
+    psi_sign: float = 0.0
+
+
+class PhasesSpec(BaseModel):
+    """Required Stage I/II pair (moganite + chalcedony); see ``docs/ARCHITECTURE.md``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    moganite: PhaseSpec
+    chalcedony: PhaseSpec
+
+
+def apply_physics_phases_legacy_shim(physics: dict[str, Any]) -> None:
+    """Inject ``physics['phases']`` from legacy flat keys when ``phases`` is absent (in-place).
+
+    Legacy shim (potential dispatch refactor, Step 1): if ``physics.phases`` is
+    missing, build it from optional ``W``, ``M_m``, ``M_c``, ``rho_m``,
+    ``rho_c`` so existing canonical YAMLs stay unchanged. Same mapping as
+    ``RunConfigValidated`` ``mode='before'`` validator.
+    """
+    if "phases" in physics:
+        return
+    physics["phases"] = {
+        "moganite": {
+            "potential": "double_well",
+            "potential_kwargs": {"W": float(physics.get("W", 1.0))},
+            "mobility": float(physics.get("M_m", 1.0)),
+            "rho": float(physics.get("rho_m", 1.0)),
+            "psi_sign": 1.0,
+        },
+        "chalcedony": {
+            "potential": "double_well",
+            "potential_kwargs": {"W": float(physics.get("W", 1.0))},
+            "mobility": float(physics.get("M_c", 1.0)),
+            "rho": float(physics.get("rho_c", 1.0)),
+            "psi_sign": -1.0,
+        },
+    }
+
+
 class OutputSpec(BaseModel):
     """Output toggles (extensible for future diagnostics keys)."""
 
@@ -110,6 +159,26 @@ class RunConfigValidated(BaseModel):
     time: TimeSpec
     output: OutputSpec = Field(default_factory=OutputSpec)
     initial: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_physics_phases_legacy(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            phys = data.get("physics")
+            if phys is None:
+                data["physics"] = {}
+                phys = data["physics"]
+            if isinstance(phys, dict):
+                apply_physics_phases_legacy_shim(phys)
+        return data
+
+    @model_validator(mode="after")
+    def _validate_physics_phases(self) -> Self:
+        phases = self.physics.get("phases")
+        if phases is not None:
+            validated = PhasesSpec.model_validate(phases)
+            self.physics["phases"] = validated.model_dump(mode="python")
+        return self
 
 
 @dataclass(frozen=True)

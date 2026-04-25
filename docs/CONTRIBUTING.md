@@ -31,6 +31,12 @@ See [ARCHITECTURE.md §2.8](ARCHITECTURE.md). In short:
 3. Extend `GeometrySpec.type` in `core/io.py`.
 4. Template YAML under `experiments/canonical/`.
 
+### New bulk phase potential (Cahn–Hilliard driving force)
+
+1. Add ``def my_potential_prime(phi: Array, *, …) -> Array`` in ``core/potentials.py`` (same contract as existing ``*_prime`` helpers: returns ``∂f/∂φ``, shape/dtype match ``phi``).
+2. Register it: ``POTENTIAL_BUILDERS["my_potential"] = my_potential_prime``.
+3. Extend ``PhaseSpec.potential``’s ``Literal[...]`` in ``core/io.py`` and handle any new kwargs in ``models/agate_ch.py`` ``phase_potential_params_from_spec`` (map ``potential_kwargs`` into ``PhasePotentialParams`` fields) if the potential needs parameters beyond the existing slots.
+
 ### New diagnostic
 
 - **Stage I (cavity / rim):** `core/diagnostics_stage1.py` — NumPy (and SciPy) only, no JAX.
@@ -54,7 +60,7 @@ See [ARCHITECTURE.md §2.8](ARCHITECTURE.md). In short:
 
 ## Known permissive areas (future tightening)
 
-- **`RunConfigValidated.physics`:** still a `dict[str, Any]`. Model-specific knobs vary; a full `PhysicsSpec` per `experiment.model` is deferred until validation pain justifies it.
+- **`RunConfigValidated.physics`:** still mostly a `dict[str, Any]`; the nested **`physics.phases`** block is validated via **`PhasesSpec`** / **`PhaseSpec`**. A full typed `PhysicsSpec` per `experiment.model` is deferred until validation pain justifies it.
 - **`RunConfigValidated.initial`:** optional IC block, interpreted by each `models.*.build_initial_state`.
 
 ## Known design trade-offs

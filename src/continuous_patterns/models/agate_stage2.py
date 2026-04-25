@@ -35,11 +35,15 @@ from continuous_patterns.core.diagnostics_stage2 import (
     structure_factor_radial_average,
 )
 from continuous_patterns.core.imex import Geometry, SimParams
+from continuous_patterns.core.io import apply_physics_phases_legacy_shim
 from continuous_patterns.core.spectral import k_vectors
 from continuous_patterns.core.stress import STRESS_BUILDERS
 from continuous_patterns.core.types import SimResult, SimState
 from continuous_patterns.models._integrate import make_chunk_runner
-from continuous_patterns.models.agate_ch import _append_host_fields_snapshot
+from continuous_patterns.models.agate_ch import (
+    _append_host_fields_snapshot,
+    phase_potential_params_from_spec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +132,7 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
 def build_sim_params(cfg: dict[str, Any]) -> SimParams:
     """Stage II: ``reaction_active`` and ``dirichlet_active`` are forced ``False``."""
     ph = _require(cfg, "physics", where="config")
+    apply_physics_phases_legacy_shim(ph)
     st = _require(cfg, "stress", where="config")
 
     if "kappa_x" in ph:
@@ -147,21 +152,26 @@ def build_sim_params(cfg: dict[str, Any]) -> SimParams:
     if lambda_bar is None:
         raise KeyError("physics must include lambda_bar (or legacy alias lambda_barrier)")
 
+    phases = _require(ph, "phases", where="physics")
+    phi_m_potential = phase_potential_params_from_spec(
+        _require(phases, "moganite", where="physics.phases")
+    )
+    phi_c_potential = phase_potential_params_from_spec(
+        _require(phases, "chalcedony", where="physics.phases")
+    )
+
     return SimParams(
         reaction_active=False,
         dirichlet_active=False,
         D_c=float(_require(ph, "D_c", where="physics")),
-        M_m=float(_require(ph, "M_m", where="physics")),
-        M_c=float(_require(ph, "M_c", where="physics")),
-        W=float(_require(ph, "W", where="physics")),
+        phi_m_potential=phi_m_potential,
+        phi_c_potential=phi_c_potential,
         gamma=float(_require(ph, "gamma", where="physics")),
         kappa_x=kappa_x,
         kappa_y=kappa_y,
         stress_coupling_B=float(st.get("stress_coupling_B", 0.0)),
         k_rxn=float(ph.get("k_rxn", 0.0)),
         c_sat=float(ph.get("c_sat", 0.0)),
-        rho_m=float(ph.get("rho_m", 1.0)),
-        rho_c=float(ph.get("rho_c", 1.0)),
         c0=float(_require(ph, "c_0", where="physics")),
         lambda_bar=float(lambda_bar),
         c_ostwald=float(_require(ph, "c_ostwald", where="physics")),
@@ -297,7 +307,12 @@ def simulate(
     pc0 = np.asarray(jax.device_get(state[1]))
     c0_arr = np.asarray(jax.device_get(state[2]))
     m_total_initial = float(
-        np.sum(chi_np * (c0_arr + float(prm.rho_m) * pm0 + float(prm.rho_c) * pc0)) * dx_np * dx_np
+        np.sum(
+            chi_np
+            * (c0_arr + float(prm.phi_m_potential.rho) * pm0 + float(prm.phi_c_potential.rho) * pc0)
+        )
+        * dx_np
+        * dx_np
     )
     cumulative_injection = 0.0
 
@@ -442,7 +457,12 @@ def simulate(
     pc_f = np.asarray(jax.device_get(state[1]))
     c_f = np.asarray(jax.device_get(state[2]))
     m_total_final = float(
-        np.sum(chi_np * (c_f + float(prm.rho_m) * pm_f + float(prm.rho_c) * pc_f)) * dx_np * dx_np
+        np.sum(
+            chi_np
+            * (c_f + float(prm.phi_m_potential.rho) * pm_f + float(prm.phi_c_potential.rho) * pc_f)
+        )
+        * dx_np
+        * dx_np
     )
     meta["M_total_final"] = m_total_final
     meta["cumulative_dirichlet_injection"] = cumulative_injection

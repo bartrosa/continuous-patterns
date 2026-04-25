@@ -114,6 +114,8 @@ $$
 
 This is an **ad hoc confinement** to keep $\phi$ numerically inside (or near) $[0,1]$; it is **not** a smooth double-well derived from a single thermodynamic potential on $\mathbb{R}$.
 
+**Implementation note:** bulk $\partial f/\partial\phi$ is evaluated in ``core/potentials.py`` via plain-function dispatch (:data:`~continuous_patterns.core.potentials.POTENTIAL_BUILDERS`); optional variants include a tilted well and an asymmetric double well. The barrier derivative above is always added separately (:func:`~continuous_patterns.core.potentials.barrier_prime`). Per-phase static coefficients (including mobility $M_\alpha$, stoichiometric weight $\rho_\alpha$, and the potential kind) live in ``PhasePotentialParams`` on ``SimParams`` as ``phi_m_potential`` and ``phi_c_potential``. Run cards may set ``physics.phases`` or rely on legacy flat keys ``W``, ``M_m``, ``M_c``, ``rho_m``, ``rho_c`` (normalized to ``phases`` at YAML load in ``core/io.py``).
+
 **Hard clip after every IMEX step (implementation):** after each step, both phase fields are **pointwise clamped** in real space to
 
 $$

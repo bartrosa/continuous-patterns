@@ -12,14 +12,16 @@ nonlinear bulk, barrier, reaction ``G``, and ψ-split stress are explicit.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from continuous_patterns.core.potentials import POTENTIAL_BUILDERS, barrier_prime
 from continuous_patterns.core.stress import stress_contribution_to_mu
+from continuous_patterns.core.types import PhasePotentialParams
 
 
 @dataclass(frozen=True)
@@ -54,17 +56,32 @@ class SimParams:
     reaction_active: bool = True
     dirichlet_active: bool = True
     D_c: float = 1.0
-    M_m: float = 1.0
-    M_c: float = 1.0
-    W: float = 1.0
+    phi_m_potential: PhasePotentialParams = field(
+        default_factory=lambda: PhasePotentialParams(
+            kind="double_well",
+            W=1.0,
+            mobility=1.0,
+            rho=1.0,
+            psi_sign=1.0,
+            active=True,
+        )
+    )
+    phi_c_potential: PhasePotentialParams = field(
+        default_factory=lambda: PhasePotentialParams(
+            kind="double_well",
+            W=1.0,
+            mobility=1.0,
+            rho=1.0,
+            psi_sign=-1.0,
+            active=True,
+        )
+    )
     gamma: float = 1.0
     kappa_x: float = 1.0
     kappa_y: float = 1.0
     stress_coupling_B: float = 0.0
     k_rxn: float = 1.0
     c_sat: float = 0.0
-    rho_m: float = 1.0
-    rho_c: float = 1.0
     c0: float = 1.0
     lambda_bar: float = 10.0
     c_ostwald: float = 0.5
@@ -74,10 +91,17 @@ class SimParams:
     phi_m_ratchet_high: float = 0.5
 
 
-def _barrier_prime(phi: Array, lambda_bar: float) -> Array:
-    neg_excess = jnp.maximum(-phi, 0.0)
-    pos_excess = jnp.maximum(phi - 1.0, 0.0)
-    return -2.0 * lambda_bar * neg_excess + 2.0 * lambda_bar * pos_excess
+def _potential_kwargs_for_kind(pot: PhasePotentialParams) -> dict[str, float]:
+    """Kwargs for :data:`~continuous_patterns.core.potentials.POTENTIAL_BUILDERS`[``pot.kind``]."""
+    if pot.kind == "double_well":
+        return {"W": pot.W}
+    if pot.kind == "tilted_well":
+        return {"W": pot.W, "tilt": pot.tilt}
+    if pot.kind == "asymmetric_well":
+        return {"W": pot.W, "phi_left": pot.phi_left, "phi_right": pot.phi_right}
+    if pot.kind == "zero":
+        return {}
+    raise ValueError(f"Unknown potential kind {pot.kind!r}")
 
 
 def _smoothstep_S(phi_m: Array, low: float, high: float) -> Array:
@@ -154,7 +178,7 @@ def _update_phase(
     geom: Geometry,
     prm: SimParams,
     dt: float,
-    mobility: float,
+    pot: PhasePotentialParams,
     stress_delta: Array,
 ) -> Array:
     """Implicit linear CH stiff block in Fourier space with explicit ``μ_nl``.
@@ -167,13 +191,15 @@ def _update_phase(
     for diagnostics (Option B, χ-window drifts), not enforced by this operator.
     """
     stiff_sym = prm.kappa_x * geom.kx_sq + prm.kappa_y * geom.ky_sq
-    df = 2.0 * prm.W * phi * (1.0 - phi) * (1.0 - 2.0 * phi)
-    bar = _barrier_prime(phi, prm.lambda_bar)
+    builder = POTENTIAL_BUILDERS[pot.kind]
+    kwargs = _potential_kwargs_for_kind(pot)
+    df = builder(phi, **kwargs)
+    bar = barrier_prime(phi, lambda_bar=prm.lambda_bar)
     mu_nl = df + bar + prm.gamma * phi_other + stress_delta
     phi_hat = jnp.fft.fft2(phi)
     nl_hat = jnp.fft.fft2(mu_nl)
-    den = 1.0 + dt * mobility * geom.k_sq * stiff_sym
-    phi_new_hat = (phi_hat - dt * mobility * geom.k_sq * nl_hat) / den
+    den = 1.0 + dt * pot.mobility * geom.k_sq * stiff_sym
+    phi_new_hat = (phi_hat - dt * pot.mobility * geom.k_sq * nl_hat) / den
     phi_new = jnp.real(jnp.fft.ifft2(phi_new_hat))
     return (1.0 - chi) * phi + chi * phi_new
 
@@ -256,8 +282,8 @@ def imex_step(
         (phi_m, phi_c),
     )
 
-    phi_m_new = _update_phase(phi_m, phi_c, chi, geom, prm, dt, prm.M_m, dmu_m)
-    phi_c_new = _update_phase(phi_c, phi_m, chi, geom, prm, dt, prm.M_c, dmu_c)
+    phi_m_new = _update_phase(phi_m, phi_c, chi, geom, prm, dt, prm.phi_m_potential, dmu_m)
+    phi_c_new = _update_phase(phi_c, phi_m, chi, geom, prm, dt, prm.phi_c_potential, dmu_c)
 
     psi_m, psi_c = _psi_ostwald(c, phi_m, prm)
     phi_m_new = phi_m_new + dt * chi * psi_m * G

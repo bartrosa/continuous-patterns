@@ -28,11 +28,12 @@ from continuous_patterns.core.diagnostics_stage1 import (
     pixel_noise_rms,
 )
 from continuous_patterns.core.imex import Geometry, SimParams
+from continuous_patterns.core.io import apply_physics_phases_legacy_shim
 from continuous_patterns.core.masks import MASK_BUILDERS
 from continuous_patterns.core.spectral import k_vectors
 from continuous_patterns.core.stress import STRESS_BUILDERS
 from continuous_patterns.core.stress import none as stress_none
-from continuous_patterns.core.types import SimResult, SimState
+from continuous_patterns.core.types import PhasePotentialParams, SimResult, SimState
 from continuous_patterns.models._integrate import make_chunk_runner
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,34 @@ def _require(mapping: dict[str, Any], key: str, *, where: str) -> Any:
     if key not in mapping:
         raise KeyError(f"Missing required key {key!r} in {where}")
     return mapping[key]
+
+
+def phase_potential_params_from_spec(spec: dict[str, Any]) -> PhasePotentialParams:
+    """Build :class:`~continuous_patterns.core.types.PhasePotentialParams` from a phase dict.
+
+    Parameters
+    ----------
+    spec
+        One entry under ``cfg['physics']['phases'][name]`` after YAML validation.
+
+    Returns
+    -------
+    PhasePotentialParams
+        Frozen parameter bundle for :class:`~continuous_patterns.core.imex.SimParams`.
+    """
+    kind = str(spec.get("potential", "double_well"))
+    pk = dict(spec.get("potential_kwargs") or {})
+    return PhasePotentialParams(
+        kind=kind,
+        W=float(pk.get("W", 1.0)),
+        tilt=float(pk.get("tilt", 0.0)),
+        phi_left=float(pk.get("phi_left", 0.0)),
+        phi_right=float(pk.get("phi_right", 1.0)),
+        mobility=float(spec.get("mobility", 1.0)),
+        rho=float(spec.get("rho", 1.0)),
+        psi_sign=float(spec.get("psi_sign", 0.0)),
+        active=bool(spec.get("active", True)),
+    )
 
 
 def build_geometry(cfg: dict[str, Any]) -> Geometry:
@@ -109,6 +138,7 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
 def build_sim_params(cfg: dict[str, Any]) -> SimParams:
     """Build ``SimParams`` from ``cfg['physics']`` and ``cfg['stress']`` (Stage I defaults)."""
     ph = _require(cfg, "physics", where="config")
+    apply_physics_phases_legacy_shim(ph)
     st = _require(cfg, "stress", where="config")
 
     if "kappa_x" in ph:
@@ -131,21 +161,26 @@ def build_sim_params(cfg: dict[str, Any]) -> SimParams:
     reaction_active = bool(ph.get("reaction_active", True))
     dirichlet_active = bool(ph.get("dirichlet_active", True))
 
+    phases = _require(ph, "phases", where="physics")
+    phi_m_potential = phase_potential_params_from_spec(
+        _require(phases, "moganite", where="physics.phases")
+    )
+    phi_c_potential = phase_potential_params_from_spec(
+        _require(phases, "chalcedony", where="physics.phases")
+    )
+
     return SimParams(
         reaction_active=reaction_active,
         dirichlet_active=dirichlet_active,
         D_c=float(_require(ph, "D_c", where="physics")),
-        M_m=float(_require(ph, "M_m", where="physics")),
-        M_c=float(_require(ph, "M_c", where="physics")),
-        W=float(_require(ph, "W", where="physics")),
+        phi_m_potential=phi_m_potential,
+        phi_c_potential=phi_c_potential,
         gamma=float(_require(ph, "gamma", where="physics")),
         kappa_x=kappa_x,
         kappa_y=kappa_y,
         stress_coupling_B=float(st.get("stress_coupling_B", 0.0)),
         k_rxn=float(_require(ph, "k_rxn", where="physics")),
         c_sat=float(_require(ph, "c_sat", where="physics")),
-        rho_m=float(ph.get("rho_m", 1.0)),
-        rho_c=float(ph.get("rho_c", 1.0)),
         c0=float(_require(ph, "c_0", where="physics")),
         lambda_bar=float(lambda_bar),
         c_ostwald=float(_require(ph, "c_ostwald", where="physics")),
@@ -252,9 +287,8 @@ def run_spectral_mass_diagnostic(cfg: dict[str, Any]) -> dict[str, float]:
     cfg_dm["physics"]["dirichlet_active"] = False
     prm = build_sim_params(cfg_dm)
 
-    ph = cfg.get("physics", {})
-    rho_m = float(ph.get("rho_m", 1.0))
-    rho_c = float(ph.get("rho_c", 1.0))
+    rho_m = float(prm.phi_m_potential.rho)
+    rho_c = float(prm.phi_c_potential.rho)
 
     dx = L / n
     ii = jnp.arange(n, dtype=dtype)[:, None]
@@ -445,7 +479,13 @@ def _assemble_diagnostics(
     disk = hard_disk_mask(L=L, n=int(geom.n), cavity_R=R)
     out: dict[str, Any] = {
         "chi_weighted_silica_final": chi_weighted_silica_integral(
-            cc, pm, pc, chi, rho_m=float(prm.rho_m), rho_c=float(prm.rho_c), dx=dx
+            cc,
+            pm,
+            pc,
+            chi,
+            rho_m=float(prm.phi_m_potential.rho),
+            rho_c=float(prm.phi_c_potential.rho),
+            dx=dx,
         ),
         "jab_canonical": jab_metrics_canonical_slice(pm, pc, L=L, R=R),
         "bands_multislice": count_bands_multislice(pm, pc, L=L, R=R),
@@ -555,7 +595,12 @@ def simulate(
     pc0 = np.asarray(jax.device_get(state[1]))
     c0_arr = np.asarray(jax.device_get(state[2]))
     m_total_initial = float(
-        np.sum(chi_np * (c0_arr + float(prm.rho_m) * pm0 + float(prm.rho_c) * pc0)) * dx_np * dx_np
+        np.sum(
+            chi_np
+            * (c0_arr + float(prm.phi_m_potential.rho) * pm0 + float(prm.phi_c_potential.rho) * pc0)
+        )
+        * dx_np
+        * dx_np
     )
     cumulative_injection = 0.0
 
@@ -712,7 +757,12 @@ def simulate(
     pc_f = np.asarray(jax.device_get(state[1]))
     c_f = np.asarray(jax.device_get(state[2]))
     m_total_final = float(
-        np.sum(chi_np * (c_f + float(prm.rho_m) * pm_f + float(prm.rho_c) * pc_f)) * dx_np * dx_np
+        np.sum(
+            chi_np
+            * (c_f + float(prm.phi_m_potential.rho) * pm_f + float(prm.phi_c_potential.rho) * pc_f)
+        )
+        * dx_np
+        * dx_np
     )
     meta["M_total_initial"] = m_total_initial
     meta["M_total_final"] = m_total_final
