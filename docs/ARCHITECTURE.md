@@ -21,6 +21,7 @@ src/continuous_patterns/
   core/
     spectral.py              # FFT symbols, laplacian, gradients (pseudospectral)
     masks.py                 # geometry: χ, ring, ring_accounting + metadata; MASK_BUILDERS
+    _geometry_helpers.py    # shared grid / distance helpers for non-circular cavities
     stress.py                # σ field builders + ψ-split μ_stress; STRESS_BUILDERS
     imex.py                  # single IMEX step for Stage I and II (flagged; see §3.4)
     diagnostics_stage1.py    # cavity / rim / Option B / Jabłczyński / … (NumPy)
@@ -83,8 +84,8 @@ Immutable **per-cell** masks, spectral symbols, and prescribed $\sigma$ on the $
 | `ring_accounting` | `jax.Array` | Annulus for rim flux bookkeeping. Stage II: **zeros** or unused mask. |
 | `sigma_*` | `jax.Array` | Prescribed stress; Stage II typically **zero** unless an experiment explicitly adds bulk stress. |
 | `k_sq`, `kx_sq`, `ky_sq`, `kx_wave`, `ky_wave`, `k_four` | `jax.Array` | From `core.spectral`. |
-| `rv` | `jax.Array` | Stage I: radius from centre. Stage II: may be dummy or omitted in builders; diagnostics that need a cavity must **not** run for Stage II. |
-| `dx`, `L`, `R`, `n`, `xc`, `yc` | scalars | Metadata; `R` may be unused for pure bulk. |
+| `rv` | `jax.Array` | Stage I: **Euclidean** radius from domain centre $(L/2,L/2)$ on the grid (same for circular and non-circular builders). Stage II: may be dummy or omitted; cavity diagnostics must **not** run for Stage II. |
+| `dx`, `L`, `R`, `n`, `xc`, `yc` | scalars | Metadata; `R` is the nominal cavity radius for **circular** masks; for other `geometry.type` values it stores an **effective** length (e.g. $\sqrt{ab}$ for an ellipse, $\sqrt{A/\pi}$ from polygon area) for plotting and diagnostics that still take a scalar length. Pure bulk Stage II may set `R: 0` on `circular_cavity`. |
 
 **Construction:** `models.agate_ch.build_geometry` vs `models.agate_stage2.build_geometry` (bulk builder). **Numerical time stepping** does not switch modules — only **`SimParams` flags** (§2.2) and **diagnostics modules** differ.
 
@@ -240,9 +241,9 @@ def grad_real(u: jax.Array, kx_wave: jax.Array, ky_wave: jax.Array) -> tuple[jax
 
 ### 3.2 `core.masks`
 
-**Depends on:** `jax.numpy` only (no `spectral` import).
+**Depends on:** `jax.numpy` and **`core._geometry_helpers`** (cell-centred coordinates, transition widths, polygon / segment distances).
 
-**Public API:** `circular_cavity_masks(...) -> dict[str, jax.Array | float]`; `MASK_BUILDERS: dict[str, Callable[...]]`.
+**Public API:** one builder per `geometry.type` in **`core.io.GeometrySpec`**: `circular_cavity_masks`, `elliptic_cavity_masks`, `polygon_cavity_masks`, `wedge_cavity_masks`, `rectangular_slot_cavity_masks`, each returning the standard mask dict; dispatch via **`MASK_BUILDERS`** (string keys match `geometry.type`).
 
 ---
 
@@ -422,7 +423,7 @@ Merges sweep YAML into nested per-run dicts; calls **`experiments.run.run_one`**
 
 ## 8. `scripts/reproduce_canonical.py`
 
-Calls **`experiments.run.run_one`** on eight nested YAML paths under **`experiments/canonical/`** (Phase 4 canonical set). Environment: **`CP_REPRODUCE_MINI`**, **`CP_LOG_LEVEL`**, **`CP_NO_PROGRESS`** (see README Quick start).
+Calls **`experiments.run.run_one`** on **twelve** nested YAML paths under **`experiments/canonical/`**: the eight original paper-v2 baselines plus **`elliptic_pinning`**, **`polygon_pinning`**, **`wedge_pinning`**, **`rectangular_slot_pinning`**. With **`CP_REPRODUCE_MINI=1`**, the script runs a **seven-run** smoke (`no_pinning`, `medium_pinning`, `agate_stage2_gamma_5`, and the four geometry names) and forces **`CP_OVERRIDE_T=250`**. Other environment variables: **`CP_LOG_LEVEL`**, **`CP_NO_PROGRESS`**, optional **`CP_OVERRIDE_T`** when not in mini mode (see README Quick start).
 
 ---
 
@@ -431,7 +432,7 @@ Calls **`experiments.run.run_one`** on eight nested YAML paths under **`experime
 | Goal | Files to touch | Typical LOC |
 |------|----------------|-------------|
 | New **stress mode** | `core/stress.py`, template YAML | < 50 |
-| New **geometry** | `core/masks.py`, template YAML | < 50 |
+| New **geometry** | `core/masks.py`, `core/_geometry_helpers.py` if needed, `GeometrySpec` + validator in `core/io.py`, template YAML | < 80 |
 | New **Stage I metric** | `core/diagnostics_stage1.py`, `summary` schema in `io` | varies |
 | New **Stage II metric** | `core/diagnostics_stage2.py` | varies |
 | New **figure** | `core/plotting.py` | varies |
@@ -497,4 +498,4 @@ Integration tests run on **CPU** with **`jax_enable_x64=False`** to match the de
 
 ---
 
-*Document version: Phase 1 + §12 closure — aligned with `CLEANUP_PLAN.md` Phase 2.*
+*Document version: Phase 1 + §12 closure — aligned with `CLEANUP_PLAN.md` Phase 2; §3.2 / §8 / §2.1 updated for multi-cavity `MASK_BUILDERS` and twelve-path reproduce script.*
