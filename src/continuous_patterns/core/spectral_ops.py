@@ -115,8 +115,8 @@ class NeumannPeriodicOps(SpectralOps):
         if self.n < 1:
             raise ValueError(f"n must be >= 1, got {self.n}")
         dx = self.L / self.n
-        mode = jnp.arange(self.n, dtype=jnp.float64)
-        kx_1d = (jnp.pi / jnp.asarray(self.L, dtype=jnp.float64)) * mode
+        mode = jnp.arange(self.n)
+        kx_1d = (jnp.pi / jnp.asarray(self.L)) * mode
         ky_1d = (2.0 * jnp.pi) * jnp.fft.fftfreq(self.n, d=dx)
         kx_wave, ky_wave = jnp.broadcast_arrays(kx_1d[:, None], ky_1d[None, :])
         kx_sq = kx_wave * kx_wave
