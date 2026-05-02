@@ -11,7 +11,7 @@ import pytest
 from continuous_patterns.core.imex import _G, Geometry, SimParams, imex_step
 from continuous_patterns.core.io import apply_physics_phases_legacy_shim
 from continuous_patterns.core.masks import circular_cavity_masks
-from continuous_patterns.core.spectral import k_vectors
+from continuous_patterns.core.spectral_ops import PeriodicOps
 from continuous_patterns.core.stress import none as stress_none
 from continuous_patterns.core.stress import uniform_biaxial
 from continuous_patterns.core.types import PhasePotentialParams
@@ -70,7 +70,6 @@ def _geometry_stage2(*, L: float, n: int) -> Geometry:
 
 
 def _geometry_bulk(*, L: float, n: int) -> Geometry:
-    k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
     z = jnp.zeros((n, n), dtype=jnp.float64)
     o = jnp.ones((n, n), dtype=jnp.float64)
     return Geometry(
@@ -80,12 +79,7 @@ def _geometry_bulk(*, L: float, n: int) -> Geometry:
         sigma_xx=z,
         sigma_yy=z,
         sigma_xy=z,
-        k_sq=k_sq,
-        kx_sq=kx_sq,
-        ky_sq=ky_sq,
-        kx_wave=kx_wave,
-        ky_wave=ky_wave,
-        k_four=k_four,
+        spectral_ops=PeriodicOps(n=n, L=L),
         rv=z,
         dx=L / n,
         L=L,
@@ -98,7 +92,6 @@ def _geometry_bulk(*, L: float, n: int) -> Geometry:
 
 def _geometry_stage1(*, L: float, R: float, n: int) -> Geometry:
     m = circular_cavity_masks(L=L, R=R, n=n, eps_scale=2.0)
-    k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
     sxx, syy, sxy = stress_none(L=L, n=n)
     return Geometry(
         chi=m["chi"],
@@ -107,12 +100,7 @@ def _geometry_stage1(*, L: float, R: float, n: int) -> Geometry:
         sigma_xx=sxx,
         sigma_yy=syy,
         sigma_xy=sxy,
-        k_sq=k_sq,
-        kx_sq=kx_sq,
-        ky_sq=ky_sq,
-        kx_wave=kx_wave,
-        ky_wave=ky_wave,
-        k_four=k_four,
+        spectral_ops=PeriodicOps(n=n, L=L),
         rv=m["rv"],
         dx=float(m["dx"]),
         L=float(m["L"]),
@@ -261,7 +249,6 @@ def test_mass_conservation_closed_system_stage2() -> None:
 def test_mass_conservation_closed_system_stage2_with_psi_stress() -> None:
     """Uniform biaxial ψ-stress must not inject silica when ``G = 0`` (Phase 2 bug class)."""
     L, n = 10.0, 32
-    k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
     z = jnp.zeros((n, n), dtype=jnp.float64)
     sxx, syy, sxy = uniform_biaxial(L=L, n=n, sigma_0=0.1)
     geom = Geometry(
@@ -271,12 +258,7 @@ def test_mass_conservation_closed_system_stage2_with_psi_stress() -> None:
         sigma_xx=sxx,
         sigma_yy=syy,
         sigma_xy=sxy,
-        k_sq=k_sq,
-        kx_sq=kx_sq,
-        ky_sq=ky_sq,
-        kx_wave=kx_wave,
-        ky_wave=ky_wave,
-        k_four=k_four,
+        spectral_ops=PeriodicOps(n=n, L=L),
         rv=z,
         dx=L / n,
         L=L,

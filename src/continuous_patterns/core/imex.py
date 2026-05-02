@@ -25,6 +25,7 @@ from jax.typing import ArrayLike
 
 from continuous_patterns.core.gravity import body_force_advection_y, rim_ramp_field
 from continuous_patterns.core.potentials import POTENTIAL_BUILDERS, barrier_prime
+from continuous_patterns.core.spectral_ops import SpectralOps
 from continuous_patterns.core.stress import mu_stress_real
 from continuous_patterns.core.types import PhasePotentialParams
 
@@ -39,12 +40,7 @@ class Geometry:
     sigma_xx: Array
     sigma_yy: Array
     sigma_xy: Array
-    k_sq: Array
-    kx_sq: Array
-    ky_sq: Array
-    kx_wave: Array
-    ky_wave: Array
-    k_four: Array
+    spectral_ops: SpectralOps
     rv: Array
     dx: float
     L: float
@@ -52,6 +48,30 @@ class Geometry:
     n: int
     xc: float
     yc: float
+
+    @property
+    def k_sq(self) -> Array:
+        return jnp.asarray(self.spectral_ops.laplacian_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def k_four(self) -> Array:
+        return jnp.asarray(self.spectral_ops.biharmonic_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def kx_sq(self) -> Array:
+        return jnp.asarray(self.spectral_ops.kx_sq_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def ky_sq(self) -> Array:
+        return jnp.asarray(self.spectral_ops.ky_sq_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def kx_wave(self) -> Array:
+        return jnp.asarray(self.spectral_ops.kx_wave_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def ky_wave(self) -> Array:
+        return jnp.asarray(self.spectral_ops.ky_wave_symbol(), dtype=self.chi.dtype)
 
 
 @dataclass(frozen=True)
@@ -284,11 +304,11 @@ def _update_phase(
     df = builder(phi, **kwargs)
     bar = barrier_prime(phi, lambda_bar=prm.lambda_bar)
     mu_nl = df + bar + phi_other_sum + stress_delta
-    phi_hat = jnp.fft.fft2(phi)
-    nl_hat = jnp.fft.fft2(mu_nl)
+    phi_hat = geom.spectral_ops.forward(phi)
+    nl_hat = geom.spectral_ops.forward(mu_nl)
     den = 1.0 + dt * pot.mobility * geom.k_sq * stiff_sym
     phi_new_hat = (phi_hat - dt * pot.mobility * geom.k_sq * nl_hat) / den
-    phi_new = jnp.real(jnp.fft.ifft2(phi_new_hat))
+    phi_new = jnp.real(geom.spectral_ops.inverse(phi_new_hat))
     return (1.0 - chi) * phi + chi * phi_new
 
 
@@ -333,11 +353,11 @@ def imex_step(
         (c, phi_m, phi_c, phi_q, phi_imp),
     )
 
-    c_hat = jnp.fft.fft2(c)
-    g_hat = jnp.fft.fft2(chi * G)
+    c_hat = geom.spectral_ops.forward(c)
+    g_hat = geom.spectral_ops.forward(chi * G)
     c_den = 1.0 + dt * prm.D_c * geom.k_sq
     c_new_hat = (c_hat - dt * g_hat) / c_den
-    c_lin = jnp.real(jnp.fft.ifft2(c_new_hat))
+    c_lin = jnp.real(geom.spectral_ops.inverse(c_new_hat))
 
     def _grav_c_on(_: Array) -> Array:
         dy_c = body_force_advection_y(c_hat, geom.ky_wave)
@@ -393,7 +413,7 @@ def imex_step(
             "phi_q": prm.gravity_g_phi_q,
             "phi_imp": prm.gravity_g_phi_imp,
         }[name]
-        dy_phi = body_force_advection_y(jnp.fft.fft2(phi_u), geom.ky_wave)
+        dy_phi = body_force_advection_y(geom.spectral_ops.forward(phi_u), geom.ky_wave)
         phi_n = phi_u - dt * jnp.asarray(float(gv), dtype=phi_u.dtype) * dy_phi * chi
         new_phis[name] = phi_n
 
