@@ -59,7 +59,7 @@ class ExperimentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = "run"
-    model: Literal["cavity_reactive", "bulk_relaxation"]
+    model: Literal["cavity_reactive", "bulk_relaxation", "slab_reactive"]
     seed: int = 42
     description: str | None = None
     scenario: str | None = None
@@ -83,6 +83,7 @@ class GeometrySpec(BaseModel):
         "polygon_cavity",
         "wedge_cavity",
         "rectangular_slot",
+        "slab",
     ] = "circular_cavity"
     L: float = Field(gt=0)
     n: int = Field(gt=0)
@@ -100,6 +101,7 @@ class GeometrySpec(BaseModel):
     R_outer: float | None = None
     opening_angle: float | None = None
     theta_center: float | None = None
+    rim_width_px: int = 2
 
     @model_validator(mode="after")
     def _geometry_required_fields(self) -> Self:
@@ -240,6 +242,33 @@ class GeometrySpec(BaseModel):
                 missing.append("width")
             if self.height is None:
                 missing.append("height")
+        elif t == "slab":
+            forbid(
+                frozenset(
+                    {
+                        "R",
+                        "a",
+                        "b",
+                        "theta",
+                        "width",
+                        "height",
+                        "n_sides",
+                        "vertices",
+                        "theta_offset",
+                        "R_inner",
+                        "R_outer",
+                        "opening_angle",
+                        "theta_center",
+                    }
+                ),
+                "slab",
+            )
+            if self.n < 4:
+                raise ValueError("geometry.type='slab' requires n >= 4")
+            if not (1 <= int(self.rim_width_px) <= int(self.n // 4)):
+                raise ValueError(
+                    f"geometry.rim_width_px must be in [1, n//4] for slab, got {self.rim_width_px}"
+                )
 
         if missing:
             raise ValueError(

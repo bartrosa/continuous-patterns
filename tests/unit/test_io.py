@@ -454,6 +454,40 @@ geometry:
     assert load_run_config(p2)["geometry"]["R_outer"] == 40.0
 
 
+def test_geometry_spec_slab_load(tmp_path: Path) -> None:
+    slab = """
+geometry:
+  type: slab
+  L: 100.0
+  n: 1024
+  rim_width_px: 2
+  eps_scale: 2.0
+"""
+    p = tmp_path / "slab.yaml"
+    p.write_text(_base_card(slab), encoding="utf-8")
+    cfg = load_run_config(p)
+    assert cfg["geometry"]["type"] == "slab"
+    assert cfg["geometry"]["L"] == pytest.approx(100.0)
+    assert cfg["geometry"]["n"] == 1024
+    assert cfg["geometry"]["rim_width_px"] == 2
+
+
+def test_geometry_spec_slab_rejects_R(tmp_path: Path) -> None:
+    slab_bad = """
+geometry:
+  type: slab
+  L: 100.0
+  n: 1024
+  R: 30.0
+  rim_width_px: 2
+  eps_scale: 2.0
+"""
+    p = tmp_path / "slab_bad_R.yaml"
+    p.write_text(_base_card(slab_bad), encoding="utf-8")
+    with pytest.raises(ValidationError, match="must not set"):
+        load_run_config(p)
+
+
 def test_geometry_spec_missing_required_raises(tmp_path: Path) -> None:
     bad_elliptic = """
 geometry:
