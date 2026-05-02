@@ -9,9 +9,10 @@ experiment:
 geometry:
   type: slab
   L: 100.0
-  n: 1024
+  n: 512
   eps_scale: 2.0
   rim_width_px: 2
+  rim_left_width_px: 2
 
 physics:
   W: 1.0
@@ -27,9 +28,25 @@ physics:
   c_ostwald: 0.6
   w_ostwald: 0.1
   lambda_bar: 10.0
+  eta_wall: 0.0
   use_ratchet: true
   phi_m_ratchet_low: 0.3
   phi_m_ratchet_high: 0.5
+  phases:
+    moganite:
+      potential: double_well
+      potential_kwargs: {W: 1.0}
+      mobility: 0.01
+      rho: 1.0
+      psi_sign: 1.0
+      active: true
+    chalcedony:
+      potential: double_well
+      potential_kwargs: {W: 1.0}
+      mobility: 1.0
+      rho: 1.0
+      psi_sign: -1.0
+      active: true
 
 stress:
   mode: none
@@ -38,12 +55,14 @@ stress:
   stress_eps_factor: 3.0
 
 time:
-  T: 10000.0
+  dt: 0.01
+  T: 20000.0
+  snapshot_every: 500
 
 output:
   save_final_state: true
   save_evolution: true
-  evolution_dt: 100.0
+  evolution_dt: 200.0
   record_evolution_gif: true
   gif_max_frames: 100
   gif_fps: 10

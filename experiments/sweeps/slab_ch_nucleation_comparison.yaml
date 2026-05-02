@@ -1,0 +1,17 @@
+sweep:
+  name: slab_ch_nucleation_comparison
+  base_config: experiments/canonical/slab/run_slab_ch.yaml
+  description: |
+    Compare two nucleation strategies in slab CH:
+    - III (diffusive_seed): eta_wall=0, only the IC seed at the wall
+    - II (wall_nucleation): eta_wall=0.1, locally lowered c_sat at left wall
+    Sweep over c_init across both models.
+  axes:
+    - name: model_label
+      values: [diffusive_seed, wall_nucleation]
+      param_overrides:
+        diffusive_seed: {physics.eta_wall: 0.0}
+        wall_nucleation: {physics.eta_wall: 0.1}
+    - name: c_init
+      path: initial.c_init
+      values: [0.1, 0.2, 0.4, 0.6, 0.8]
