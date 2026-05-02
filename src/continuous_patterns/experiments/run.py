@@ -17,6 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import jax
 import numpy as np
 
 from continuous_patterns.core.io import (
@@ -44,6 +45,7 @@ MODEL_DISPATCH: dict[str, Any] = {
 }
 
 logger = logging.getLogger(__name__)
+_warned_cuda_kernel_version_note = False
 
 _LOG_FORMAT = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -103,6 +105,15 @@ def run_one(
     if model_name not in MODEL_DISPATCH:
         raise ValueError(f"Unknown model: {model_name!r}. Available: {sorted(MODEL_DISPATCH)}")
     simulate_fn = MODEL_DISPATCH[model_name]
+    global _warned_cuda_kernel_version_note
+    if not _warned_cuda_kernel_version_note and jax.default_backend() == "gpu":
+        logger.warning(
+            "CUDA note: messages like "
+            "'cuda_executor ... Could not get kernel mode driver version' "
+            "are a known XLA logging quirk on some driver stacks. "
+            "If the run progresses normally, they are typically non-fatal."
+        )
+        _warned_cuda_kernel_version_note = True
 
     cfg.setdefault("output", {})
     cfg["output"]["record_spectral_mass_diagnostic"] = True
