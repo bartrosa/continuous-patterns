@@ -16,13 +16,13 @@ from continuous_patterns.core.gravity import (
 from continuous_patterns.core.imex import Geometry, imex_step
 from continuous_patterns.core.masks import circular_cavity_masks
 from continuous_patterns.core.spectral import k_vectors
+from continuous_patterns.core.spectral_ops import PeriodicOps
 from continuous_patterns.core.stress import none as stress_none
 from continuous_patterns.models.cavity_reactive import build_sim_params
 
 
 def _geom_stage1(*, L: float, R: float, n: int) -> Geometry:
     m = circular_cavity_masks(L=L, R=R, n=n, eps_scale=2.0)
-    k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
     sxx, syy, sxy = stress_none(L=L, n=n)
     z = jnp.asarray(m["chi"], dtype=jnp.float64)
     return Geometry(
@@ -32,12 +32,7 @@ def _geom_stage1(*, L: float, R: float, n: int) -> Geometry:
         sigma_xx=jnp.asarray(sxx, dtype=jnp.float64),
         sigma_yy=jnp.asarray(syy, dtype=jnp.float64),
         sigma_xy=jnp.asarray(sxy, dtype=jnp.float64),
-        k_sq=jnp.asarray(k_sq, dtype=jnp.float64),
-        kx_sq=jnp.asarray(kx_sq, dtype=jnp.float64),
-        ky_sq=jnp.asarray(ky_sq, dtype=jnp.float64),
-        kx_wave=jnp.asarray(kx_wave, dtype=jnp.float64),
-        ky_wave=jnp.asarray(ky_wave, dtype=jnp.float64),
-        k_four=jnp.asarray(k_four, dtype=jnp.float64),
+        spectral_ops=PeriodicOps(n=n, L=L),
         rv=jnp.asarray(m["rv"], dtype=jnp.float64),
         dx=float(m["dx"]),
         L=float(m["L"]),

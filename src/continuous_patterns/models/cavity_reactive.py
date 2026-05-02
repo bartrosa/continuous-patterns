@@ -36,7 +36,7 @@ from continuous_patterns.core.diagnostics_stage1 import (
 from continuous_patterns.core.imex import Geometry, SimParams
 from continuous_patterns.core.io import apply_physics_phases_legacy_shim
 from continuous_patterns.core.masks import MASK_BUILDERS
-from continuous_patterns.core.spectral import k_vectors
+from continuous_patterns.core.spectral_ops import PeriodicOps
 from continuous_patterns.core.stress import (
     STRESS_BUILDERS,
     apply_pore_pressure,
@@ -124,7 +124,7 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
         raise AssertionError(f"unhandled geometry.type {gtype!r}")
     m = builder(**gkwargs)
 
-    k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
+    spectral_ops = PeriodicOps(n=n, L=L)
 
     st = _require(cfg, "stress", where="config")
     smode = _require(st, "mode", where="config.stress")
@@ -188,12 +188,7 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
         sigma_xx=_to(sxx),
         sigma_yy=_to(syy),
         sigma_xy=_to(sxy),
-        k_sq=jnp.asarray(k_sq, dtype=dtype),
-        kx_sq=jnp.asarray(kx_sq, dtype=dtype),
-        ky_sq=jnp.asarray(ky_sq, dtype=dtype),
-        kx_wave=jnp.asarray(kx_wave, dtype=dtype),
-        ky_wave=jnp.asarray(ky_wave, dtype=dtype),
-        k_four=jnp.asarray(k_four, dtype=dtype),
+        spectral_ops=spectral_ops,
         rv=_to(m["rv"]),
         dx=float(m["dx"]),
         L=float(m["L"]),
@@ -351,7 +346,7 @@ def build_initial_state(
 
 def _geometry_bulk_spectral(L: float, n: int, dtype: jnp.dtype) -> Geometry:
     """Periodic torus: ``χ≡1``, ``ring≡0``, for Option D spectral-mass diagnostic."""
-    k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
+    spectral_ops = PeriodicOps(n=n, L=L)
     z = jnp.zeros((n, n), dtype=dtype)
     o = jnp.ones((n, n), dtype=dtype)
     dx = L / n
@@ -370,12 +365,7 @@ def _geometry_bulk_spectral(L: float, n: int, dtype: jnp.dtype) -> Geometry:
         sigma_xx=jnp.asarray(sxx, dtype=dtype),
         sigma_yy=jnp.asarray(syy, dtype=dtype),
         sigma_xy=jnp.asarray(sxy, dtype=dtype),
-        k_sq=jnp.asarray(k_sq, dtype=dtype),
-        kx_sq=jnp.asarray(kx_sq, dtype=dtype),
-        ky_sq=jnp.asarray(ky_sq, dtype=dtype),
-        kx_wave=jnp.asarray(kx_wave, dtype=dtype),
-        ky_wave=jnp.asarray(ky_wave, dtype=dtype),
-        k_four=jnp.asarray(k_four, dtype=dtype),
+        spectral_ops=spectral_ops,
         rv=rv,
         dx=float(dx),
         L=float(L),
