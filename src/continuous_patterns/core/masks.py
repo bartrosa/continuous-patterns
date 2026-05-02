@@ -466,22 +466,20 @@ def slab_masks(
     x, y, dx, _xc, _yc = cell_centered_xy(L=L, n=n, dtype=dtype)
     chi = jnp.ones((n, n), dtype=dtype)
 
-    # In array layout, right-edge slab rim is implemented as the last columns.
-    x_right = y
     sigma_ring = eps_transition(dx=dx, eps_scale=eps_scale, dtype=dtype)
-    ring_raw = jnp.exp(-0.5 * ((x_right - L) / sigma_ring) ** 2)
+    ring_raw = jnp.exp(-0.5 * ((x - L) / sigma_ring) ** 2)
     ring = ring_raw / jnp.maximum(jnp.max(ring_raw), jnp.asarray(1e-30, dtype=dtype))
 
-    j_grid = jnp.arange(n, dtype=jnp.int32)[None, :]
+    i_grid = jnp.arange(n, dtype=jnp.int32)[:, None]
     rim_threshold = jnp.asarray(n - rim_width_px, dtype=jnp.int32)
     ring_accounting = jnp.where(
-        j_grid >= rim_threshold,
+        i_grid >= rim_threshold,
         jnp.asarray(1.0, dtype=dtype),
         jnp.asarray(0.0, dtype=dtype),
     )
     ring_accounting = jnp.broadcast_to(ring_accounting, (n, n))
 
-    rv = jnp.abs(x_right - jnp.asarray(L, dtype=dtype))
+    rv = jnp.abs(x - jnp.asarray(L, dtype=dtype))
     return {
         "chi": chi,
         "ring": ring,
