@@ -40,4 +40,18 @@ stress:
 time:
   T: 10000.0
 
-initial: {}
+output:
+  save_final_state: true
+  save_evolution: true
+  evolution_dt: 100.0
+  record_evolution_gif: true
+  gif_max_frames: 100
+  gif_fps: 10
+
+initial:
+  c_init: 0.2
+  phi_m_init: 0.0
+  phi_c_init: 0.0
+  phi_noise_amplitude: 0.01
+  phi_m_wall_layer: 0.5
+  phi_m_wall_width_px: 2

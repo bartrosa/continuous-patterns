@@ -21,7 +21,7 @@ from typing import Any, Literal, Self
 
 import numpy as np
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from continuous_patterns.core.plotting import plot_fields_final
 
@@ -611,6 +611,38 @@ class OutputSpec(BaseModel):
     log_level: str = "INFO"
 
 
+class InitialSpec(BaseModel):
+    """Initial-condition knobs (permissive for model-specific extensions)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    phi_m_wall_layer: float = 0.0
+    phi_m_wall_width_px: int = 0
+
+    @field_validator("phi_m_wall_layer")
+    @classmethod
+    def _validate_phi_m_wall_layer(cls, v: float) -> float:
+        vv = float(v)
+        if not (0.0 <= vv <= 1.0):
+            raise ValueError("initial.phi_m_wall_layer must be in [0, 1]")
+        return vv
+
+    @field_validator("phi_m_wall_width_px")
+    @classmethod
+    def _validate_phi_m_wall_width_px(cls, v: int, info: ValidationInfo) -> int:
+        width = int(v)
+        if width < 0:
+            raise ValueError("initial.phi_m_wall_width_px must be >= 0")
+        n_ctx = info.context.get("n") if isinstance(info.context, dict) else None
+        if n_ctx is not None:
+            max_w = int(n_ctx) // 4
+            if width > max_w:
+                raise ValueError(
+                    f"initial.phi_m_wall_width_px must be <= n//4 ({max_w}) for n={n_ctx}"
+                )
+        return width
+
+
 class RunConfigValidated(BaseModel):
     """Validated nested run card (strict top-level; permissive ``physics`` / ``initial``)."""
 
@@ -689,6 +721,11 @@ class RunConfigValidated(BaseModel):
             if upd:
                 return self.model_copy(update={"stress": st.model_copy(update=upd)})
         return self
+
+    @model_validator(mode="after")
+    def _validate_initial(self) -> Self:
+        ini = InitialSpec.model_validate(self.initial, context={"n": int(self.geometry.n)})
+        return self.model_copy(update={"initial": ini.model_dump(mode="python")})
 
 
 @dataclass(frozen=True)

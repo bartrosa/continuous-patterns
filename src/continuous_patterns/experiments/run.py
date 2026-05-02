@@ -158,7 +158,10 @@ def run_one(
                 params_for_panel["_diagnostics"] = {**result.diagnostics, "wall_time_s": wall_s}
             meta = result.meta if isinstance(result.meta, dict) else {}
             meta_r = meta.get("effective_cavity_R")
-            cavity_r = float(meta_r) if meta_r is not None else float(gcfg.get("R", 0.0))
+            gcfg_r = gcfg.get("R", 0.0)
+            cavity_r = (
+                float(meta_r) if meta_r is not None else float(0.0 if gcfg_r is None else gcfg_r)
+            )
             write_figures_final(
                 paths.root,
                 phi_m=np.asarray(result.state_final.phi_m),
@@ -212,7 +215,7 @@ def run_one(
                         gif_snaps,
                         gif_path,
                         L=float(gcfg["L"]),
-                        R=float(gcfg.get("R", 0.0)),
+                        R=float(0.0 if gcfg.get("R", 0.0) is None else gcfg.get("R", 0.0)),
                         fps=fps,
                         field_name="phi_m",
                     )

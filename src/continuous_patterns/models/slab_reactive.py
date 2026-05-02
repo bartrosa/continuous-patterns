@@ -13,7 +13,8 @@ import numpy as np
 from jax import Array
 from tqdm.auto import tqdm
 
-from continuous_patterns.core.imex import Geometry
+from continuous_patterns.core.diagnostics_slab import compute_slab_axial_diagnostics
+from continuous_patterns.core.imex import Geometry, SimParams
 from continuous_patterns.core.masks import MASK_BUILDERS
 from continuous_patterns.core.spectral_ops import NeumannPeriodicOps
 from continuous_patterns.core.stress import (
@@ -28,7 +29,6 @@ from continuous_patterns.models.cavity_reactive import (
     _append_host_fields_snapshot,
     _assemble_diagnostics,
     _require,
-    build_initial_state,
     build_sim_params,
     run_spectral_mass_diagnostic,
 )
@@ -108,7 +108,9 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
 
     return Geometry(
         chi=_to(m["chi"]),
-        ring=_to(m["ring"]),
+        # Slab uses a hard Dirichlet strip (right wall), so IMEX rim enforcement
+        # should use the hard accounting mask rather than the smooth Gaussian.
+        ring=_to(m["ring_accounting"]),
         ring_accounting=_to(m["ring_accounting"]),
         sigma_xx=_to(sxx),
         sigma_yy=_to(syy),
@@ -122,6 +124,65 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
         xc=float(m["xc"]),
         yc=float(m["yc"]),
     )
+
+
+def build_initial_state(
+    cfg: dict[str, Any],
+    geom: Geometry,
+    prm: SimParams,
+    key: Array,
+) -> tuple[Array, Array, Array, Array, Array]:
+    """Slab IC with optional left-wall moganite nucleation seed."""
+    n = geom.n
+    dtype = geom.chi.dtype
+    ph = cfg["physics"]
+    ic = cfg.get("initial", {})
+
+    phi_m0 = float(ic.get("phi_m_init", 0.0))
+    phi_c0 = float(ic.get("phi_c_init", 0.0))
+    phi_q0 = float(ic.get("phi_q_init", 0.0))
+    phi_imp0 = float(ic.get("phi_imp_init", 0.0))
+    noise_default = float(ic.get("phi_noise_amplitude", 0.01))
+    sig_m = float(ic.get("phi_m_noise", noise_default))
+    sig_c = float(ic.get("phi_c_noise", noise_default))
+    sig_q = float(ic.get("phi_q_noise", noise_default))
+    sig_imp = float(ic.get("phi_imp_noise", noise_default))
+
+    k_m, k_c, k_q, k_i, _ = jax.random.split(key, 5)
+    chi = geom.chi
+    phi_m = (phi_m0 + sig_m * jax.random.normal(k_m, (n, n), dtype=dtype)) * chi
+    phi_c = (phi_c0 + sig_c * jax.random.normal(k_c, (n, n), dtype=dtype)) * chi
+    if prm.phi_q_potential.active:
+        phi_q = (phi_q0 + sig_q * jax.random.normal(k_q, (n, n), dtype=dtype)) * chi
+    else:
+        phi_q = jnp.zeros((n, n), dtype=dtype)
+    if prm.phi_imp_potential.active:
+        phi_imp = (phi_imp0 + sig_imp * jax.random.normal(k_i, (n, n), dtype=dtype)) * chi
+    else:
+        phi_imp = jnp.zeros((n, n), dtype=dtype)
+
+    phi_m_wall_layer = float(ic.get("phi_m_wall_layer", 0.0))
+    phi_m_wall_width_px = int(ic.get("phi_m_wall_width_px", 0))
+    if phi_m_wall_layer > 0.0 and phi_m_wall_width_px > 0:
+        seed_mask = jnp.zeros((n, n), dtype=dtype)
+        seed_mask = seed_mask.at[:phi_m_wall_width_px, :].set(1.0)
+        phi_m = jnp.where(seed_mask > 0.5, jnp.asarray(phi_m_wall_layer, dtype=dtype), phi_m)
+
+    c_sat = float(_require(ph, "c_sat", where="physics"))
+    _ = float(_require(ph, "c_0", where="physics"))
+    if "c_init" in ic and ic.get("c_init_factor") is not None:
+        raise ValueError("initial: set at most one of c_init and c_init_factor")
+    if ic.get("c_init_factor") is not None:
+        c_init_interior = c_sat * float(ic["c_init_factor"])
+    elif "c_init" in ic and ic["c_init"] is None:
+        c_init_interior = c_sat
+    elif "c_init" in ic:
+        c_init_interior = float(ic["c_init"])
+    else:
+        c_init_interior = c_sat
+    c = c_init_interior * chi
+    c = jnp.asarray(c, dtype=dtype)
+    return phi_m, phi_c, phi_q, phi_imp, c
 
 
 def simulate(
@@ -372,6 +433,11 @@ def simulate(
         t=t_final,
     )
     diagnostics = _assemble_diagnostics(state, geom, prm, meta)
+    diagnostics["slab_axial"] = compute_slab_axial_diagnostics(
+        np.asarray(state[0]),
+        np.asarray(state[1]),
+        L=float(geom.L),
+    )
     return SimResult(
         state_final=state_final,
         meta=meta,

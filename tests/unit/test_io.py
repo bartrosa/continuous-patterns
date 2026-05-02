@@ -488,6 +488,43 @@ geometry:
         load_run_config(p)
 
 
+def test_initial_spec_slab_seed_fields_load(tmp_path: Path) -> None:
+    slab_seed = """
+geometry:
+  type: slab
+  L: 100.0
+  n: 128
+  rim_width_px: 2
+  eps_scale: 2.0
+initial:
+  phi_m_wall_layer: 0.5
+  phi_m_wall_width_px: 2
+"""
+    p = tmp_path / "slab_seed.yaml"
+    p.write_text(_base_card(slab_seed), encoding="utf-8")
+    cfg = load_run_config(p)
+    assert cfg["initial"]["phi_m_wall_layer"] == pytest.approx(0.5)
+    assert cfg["initial"]["phi_m_wall_width_px"] == 2
+
+
+def test_initial_spec_slab_seed_width_rejected_when_too_large(tmp_path: Path) -> None:
+    slab_bad = """
+geometry:
+  type: slab
+  L: 100.0
+  n: 64
+  rim_width_px: 2
+  eps_scale: 2.0
+initial:
+  phi_m_wall_layer: 0.5
+  phi_m_wall_width_px: 20
+"""
+    p = tmp_path / "slab_seed_bad.yaml"
+    p.write_text(_base_card(slab_bad), encoding="utf-8")
+    with pytest.raises(ValidationError, match="phi_m_wall_width_px"):
+        load_run_config(p)
+
+
 def test_geometry_spec_missing_required_raises(tmp_path: Path) -> None:
     bad_elliptic = """
 geometry:

@@ -461,7 +461,12 @@ def imex_step(
         c_new,
     )
     dx_arr = jnp.asarray(geom.dx, dtype=c_new.dtype)
-    injection_this_step = jnp.sum(geom.chi * (c_new - c_before_rim)) * (dx_arr * dx_arr)
+    rim_injection_this_step = jnp.sum(geom.chi * (c_new - c_before_rim)) * (dx_arr * dx_arr)
+
+    phi_m_raw = phi_m_new
+    phi_c_raw = phi_c_new
+    phi_q_raw = phi_q_new
+    phi_imp_raw = phi_imp_new
 
     lo = jnp.asarray(-0.05, dtype=phi_m_new.dtype)
     hi = jnp.asarray(1.05, dtype=phi_m_new.dtype)
@@ -475,6 +480,23 @@ def imex_step(
         phi_imp_new = jnp.clip(phi_imp_new, lo, hi)
     else:
         phi_imp_new = jnp.zeros_like(phi_imp)
+
+    clip_mass_delta = jnp.sum(
+        geom.chi
+        * (
+            jnp.asarray(prm.phi_m_potential.rho, dtype=phi_m_new.dtype) * (phi_m_new - phi_m_raw)
+            + jnp.asarray(prm.phi_c_potential.rho, dtype=phi_c_new.dtype) * (phi_c_new - phi_c_raw)
+            + jnp.asarray(prm.phi_q_potential.rho, dtype=phi_q_new.dtype) * (phi_q_new - phi_q_raw)
+            + jnp.asarray(prm.phi_imp_potential.rho, dtype=phi_imp_new.dtype)
+            * (phi_imp_new - phi_imp_raw)
+        )
+    ) * (dx_arr * dx_arr)
+    injection_this_step = jax.lax.cond(
+        jnp.asarray(prm.dirichlet_active),
+        lambda _: rim_injection_this_step + clip_mass_delta,
+        lambda _: jnp.asarray(0.0, dtype=c_new.dtype),
+        jnp.asarray(0.0, dtype=c_new.dtype),
+    )
 
     delta_pair = jnp.zeros((2,), dtype=c_new.dtype)
     return (phi_m_new, phi_c_new, phi_q_new, phi_imp_new, c_new), (delta_pair, injection_this_step)
