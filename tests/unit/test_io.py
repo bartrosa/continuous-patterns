@@ -755,3 +755,77 @@ initial:
     cfg = load_run_config(p)
     assert cfg["experiment"]["scenario"] == "open_inflow"
     assert cfg["initial"]["scenario"] == "open_inflow"
+
+
+def test_slab_kinetic_config_loads() -> None:
+    root = Path(__file__).resolve().parents[2]
+    card = root / "experiments" / "canonical" / "slab_kinetic" / "baseline.yaml"
+    cfg = load_run_config(card)
+    assert cfg["experiment"]["model"] == "slab_kinetic"
+    assert cfg["geometry"]["type"] == "kinetic_1d"
+
+
+def test_slab_kinetic_rejects_2d_phase_fields(tmp_path: Path) -> None:
+    p = tmp_path / "sk_bad_phys.yaml"
+    p.write_text(
+        """
+experiment:
+  name: bad
+  model: slab_kinetic
+  seed: 1
+geometry:
+  type: kinetic_1d
+  n: 64
+physics:
+  Da: 1.0
+  kappa: 3.0
+  c1: 0.49
+  c2: 0.10
+  gamma: 4.0
+stress:
+  mode: none
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+  dt_safety: 0.4
+initial:
+  profile: linear
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="physics must not set"):
+        load_run_config(p)
+
+
+def test_slab_kinetic_rejects_geometry_L(tmp_path: Path) -> None:
+    p = tmp_path / "sk_bad_geo.yaml"
+    p.write_text(
+        """
+experiment:
+  name: bad
+  model: slab_kinetic
+  seed: 1
+geometry:
+  type: kinetic_1d
+  n: 64
+  L: 100.0
+physics:
+  Da: 1.0
+  kappa: 3.0
+  c1: 0.49
+  c2: 0.10
+stress:
+  mode: none
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+  dt_safety: 0.4
+initial:
+  profile: linear
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError):
+        load_run_config(p)

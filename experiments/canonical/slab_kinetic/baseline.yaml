@@ -1,0 +1,35 @@
+experiment:
+  name: slab_kinetic_baseline
+  model: slab_kinetic
+  seed: 42
+  description: |
+    Baseline reproduction of the Kossacki-Szymczak 1D model
+    (Heaney mechanism: H bands = polymerized silica, fast deposition;
+    L bands = monomeric silica, slow deposition).
+    Parameters from the UW poster: Da=1, kappa=3, c1=0.49, c2=0.10.
+  scenario: null
+
+geometry:
+  type: kinetic_1d
+  n: 200
+
+physics:
+  Da: 1.0
+  kappa: 3.0
+  c1: 0.49
+  c2: 0.10
+
+stress:
+  mode: none
+
+time:
+  T: 5.0
+  dt_safety: 0.4
+  snapshot_every: 100
+
+output:
+  save_final_state: true
+  log_level: INFO
+
+initial:
+  profile: linear

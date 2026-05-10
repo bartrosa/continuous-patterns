@@ -59,7 +59,7 @@ class ExperimentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = "run"
-    model: Literal["cavity_reactive", "bulk_relaxation", "slab_reactive"]
+    model: Literal["cavity_reactive", "bulk_relaxation", "slab_reactive", "slab_kinetic"]
     seed: int = 42
     description: str | None = None
     scenario: str | None = None
@@ -282,6 +282,15 @@ class GeometrySpec(BaseModel):
                 f"(see docs for required keys per type)"
             )
         return self
+
+
+class Kinetic1DGeometrySpec(BaseModel):
+    """1D kinetic slab: normalized ``x ∈ [0, 1]`` sampled by ``n`` points."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["kinetic_1d"]
+    n: int = Field(gt=0)
 
 
 class PorePressureSpec(BaseModel):
@@ -536,6 +545,7 @@ class TimeSpec(BaseModel):
     dt: float = Field(gt=0)
     T: float = Field(gt=0)
     snapshot_every: int = Field(default=500, ge=1)
+    dt_safety: float | None = Field(default=None, gt=0.0, lt=1.0)
 
 
 class PhaseSpec(BaseModel):
@@ -655,7 +665,7 @@ class RunConfigValidated(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     experiment: ExperimentSpec
-    geometry: GeometrySpec
+    geometry: GeometrySpec | Kinetic1DGeometrySpec
     physics: dict[str, Any] = Field(default_factory=dict)
     stress: StressSpec = Field(default_factory=StressSpec)
     gravity: GravitySpec = Field(default_factory=GravitySpec)
@@ -667,6 +677,9 @@ class RunConfigValidated(BaseModel):
     @classmethod
     def _inject_physics_phases_legacy(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            exp = data.get("experiment")
+            if isinstance(exp, dict) and exp.get("model") == "slab_kinetic":
+                return data
             phys = data.get("physics")
             if phys is None:
                 data["physics"] = {}
@@ -677,6 +690,8 @@ class RunConfigValidated(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_physics_subdicts(self) -> Self:
+        if self.experiment.model == "slab_kinetic":
+            return self
         phys = self.physics
         phases = phys.get("phases")
         if phases is not None:
@@ -690,6 +705,8 @@ class RunConfigValidated(BaseModel):
 
     @model_validator(mode="after")
     def _stress_geometry_coupling(self) -> Self:
+        if isinstance(self.geometry, Kinetic1DGeometrySpec):
+            return self
         st = self.stress
         g = self.geometry
         if st.mode == "kirsch":
@@ -730,6 +747,19 @@ class RunConfigValidated(BaseModel):
 
     @model_validator(mode="after")
     def _validate_initial(self) -> Self:
+        if self.experiment.model == "slab_kinetic":
+            ini_raw = dict(self.initial)
+            allowed = {"profile"}
+            bad = sorted(k for k in ini_raw if k not in allowed)
+            if bad:
+                raise ValueError(
+                    "model='slab_kinetic' initial must not set keys other than "
+                    f"{sorted(allowed)}; got {bad}"
+                )
+            prof = str(ini_raw.get("profile", "linear"))
+            if prof not in ("linear", "uniform"):
+                raise ValueError("initial.profile must be 'linear' or 'uniform' for slab_kinetic")
+            return self.model_copy(update={"initial": {"profile": prof}})
         ini = InitialSpec.model_validate(self.initial, context={"n": int(self.geometry.n)})
         initial_validated = ini.model_dump(mode="python")
         phys = dict(self.physics)
@@ -740,6 +770,30 @@ class RunConfigValidated(BaseModel):
             raise ValueError("physics.eta_wall must be <= 1.0")
         phys["eta_wall"] = eta_wall
         return self.model_copy(update={"initial": initial_validated, "physics": phys})
+
+    @model_validator(mode="after")
+    def _slab_kinetic_cross_validate(self) -> Self:
+        if self.experiment.model != "slab_kinetic":
+            return self
+        if not isinstance(self.geometry, Kinetic1DGeometrySpec):
+            raise ValueError("model='slab_kinetic' requires geometry.type='kinetic_1d'")
+        if int(self.geometry.n) < 3:
+            raise ValueError("model='slab_kinetic' requires geometry.n >= 3")
+        if self.time.dt_safety is None:
+            raise ValueError("model='slab_kinetic' requires time.dt_safety")
+        phys = self.physics
+        allowed = frozenset({"Da", "kappa", "c1", "c2"})
+        bad = sorted(k for k in phys if k not in allowed)
+        if bad:
+            raise ValueError(f"model='slab_kinetic' physics must not set: {bad}")
+        for key in ("Da", "kappa", "c1", "c2"):
+            if key not in phys:
+                raise ValueError(f"model='slab_kinetic' requires physics.{key}")
+        if self.stress.mode != "none":
+            raise ValueError("model='slab_kinetic' requires stress.mode='none'")
+        if any(abs(float(v)) > 0.0 for v in self.gravity.model_dump().values()):
+            raise ValueError("model='slab_kinetic' requires all gravity fields to be zero")
+        return self
 
 
 @dataclass(frozen=True)

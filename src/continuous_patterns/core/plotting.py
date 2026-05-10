@@ -434,6 +434,205 @@ def plot_jablczynski(
     plt.close(fig)
 
 
+def _format_kinetic_config_text(cfg: dict[str, Any]) -> str:
+    """Plain-text CONFIG column for slab_kinetic figures."""
+    exp = cfg.get("experiment", {}) or {}
+    geo = cfg.get("geometry", {}) or {}
+    phys = cfg.get("physics", {}) or {}
+    stress = cfg.get("stress", {}) or {}
+    tim = cfg.get("time", {}) or {}
+    ini = cfg.get("initial", {}) or {}
+
+    def _fmt(x: Any) -> str:
+        if isinstance(x, bool):
+            return str(x)
+        if isinstance(x, int | float):
+            return f"{float(x):g}"
+        return str(x)
+
+    lines = [
+        "CONFIG",
+        "",
+        f"  model:           {exp.get('model', '?')}",
+        f"  stress.mode:     {stress.get('mode', 'none')}",
+        f"  geometry.type:   {geo.get('type', '?')}",
+        f"  n:               {geo.get('n', '?')}",
+        f"  T:               {_fmt(tim.get('T', '?'))}",
+        f"  dt_safety:       {_fmt(tim.get('dt_safety', '?'))}",
+        f"  snapshot_every:  {_fmt(tim.get('snapshot_every', '?'))}",
+        f"  Da:              {_fmt(phys.get('Da', '?'))}",
+        f"  kappa:           {_fmt(phys.get('kappa', '?'))}",
+        f"  c1:              {_fmt(phys.get('c1', '?'))}",
+        f"  c2:              {_fmt(phys.get('c2', '?'))}",
+        f"  initial.profile: {ini.get('profile', '?')}",
+    ]
+    return "\n".join(lines)
+
+
+def _format_kinetic_summary_text(diagnostics: dict[str, Any] | None) -> str:
+    """Plain-text SUMMARY column for slab_kinetic figures."""
+    lines = ["SUMMARY", ""]
+    if diagnostics is None:
+        lines.append("  (not provided)")
+        return "\n".join(lines)
+    keys = [
+        ("n_transitions", "n_transitions", "{:d}"),
+        ("dwell_L_mean", "dwell_L_mean", "{:.4g}"),
+        ("dwell_L_std", "dwell_L_std", "{:.4g}"),
+        ("dwell_H_mean", "dwell_H_mean", "{:.4g}"),
+        ("dwell_H_std", "dwell_H_std", "{:.4g}"),
+        ("peak_period", "peak_period", "{:.4g}"),
+        ("peak_frequency", "peak_frequency", "{:.4g}"),
+        ("thickness_final", "thickness_final", "{:.4g}"),
+        ("n_steps", "n_steps", "{:d}"),
+        ("dt", "dt", "{:.4g}"),
+        ("wall_time_s", "wall_time_s", "{:.2f}s"),
+    ]
+    for label, key, fmt in keys:
+        if key not in diagnostics:
+            continue
+        val = diagnostics[key]
+        try:
+            lines.append(f"  {label + ':':<18} " + fmt.format(val))
+        except (TypeError, ValueError):
+            lines.append(f"  {label + ':':<18} {val!s}")
+    return "\n".join(lines)
+
+
+def plot_slab_kinetic_figures_final(
+    run_root: Path | str,
+    *,
+    t_hist: np.ndarray,
+    c0_hist: np.ndarray,
+    st_hist: np.ndarray,
+    th_hist: np.ndarray,
+    snapshots_t: np.ndarray,
+    snapshots_c: np.ndarray,
+    c1: float,
+    c2: float,
+    transitions: list[tuple[float, str]],
+    cfg: dict[str, Any],
+    diagnostics: dict[str, Any] | None,
+    title: str | None = None,
+    include_params_panel: bool = True,
+    dpi: int = 120,
+) -> Path:
+    """2×2 kinetic panels + CONFIG/SUMMARY (style aligned with ``plot_fields_final``)."""
+    out = Path(run_root)
+    if out.suffix.lower() != ".png":
+        out = out / "figures_final.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    tt = np.asarray(t_hist, dtype=np.float64).ravel()
+    c0 = np.asarray(c0_hist, dtype=np.float64).ravel()
+    st = np.asarray(st_hist, dtype=np.int32).ravel()
+    th = np.asarray(th_hist, dtype=np.float64).ravel()
+
+    fig = plt.figure(figsize=(9.0, 9.5), constrained_layout=True)
+    gs = gridspec.GridSpec(2, 2, figure=fig, height_ratios=[1.0, 1.0])
+    ax_c0 = fig.add_subplot(gs[0, 0])
+    ax_ht = fig.add_subplot(gs[0, 1])
+    ax_th = fig.add_subplot(gs[1, 0])
+    ax_txt = fig.add_subplot(gs[1, 1])
+
+    # Background L/H bands on c(0,t)
+    if tt.size > 1:
+        dt_med = float(np.median(np.diff(tt)))
+    else:
+        dt_med = 1.0
+    i = 0
+    while i < tt.size:
+        j = i
+        while j + 1 < tt.size and int(st[j + 1]) == int(st[i]):
+            j += 1
+        t_lo = float(tt[i]) - 0.5 * dt_med
+        t_hi = float(tt[j]) + 0.5 * dt_med
+        col = "#cfe8ff" if int(st[i]) == 0 else "#ffd6d6"
+        ax_c0.axvspan(t_lo, t_hi, facecolor=col, alpha=0.55, linewidth=0, zorder=0)
+        i = j + 1
+
+    ax_c0.plot(tt, c0, color="k", lw=1.1, zorder=2)
+    ax_c0.axhline(float(c1), color="tab:red", ls="--", lw=1.0, zorder=3)
+    ax_c0.axhline(float(c2), color="tab:blue", ls="--", lw=1.0, zorder=3)
+    for tv, _kind in transitions:
+        idx = int(np.argmin(np.abs(tt - float(tv))))
+        ax_c0.plot(float(tt[idx]), float(c0[idx]), marker="o", ms=4, zorder=4)
+    ax_c0.set_title(r"$c(x=0,\,t)$")
+    ax_c0.set_xlabel(r"$t$")
+    ax_c0.set_ylabel(r"$c$")
+    ax_c0.grid(True, alpha=0.25)
+
+    # Heatmap from snapshots (coarse in time if snapshot_every > 1)
+    sn_t = np.asarray(snapshots_t, dtype=np.float64).ravel()
+    sn_c = np.asarray(snapshots_c, dtype=np.float64)
+    if sn_c.size > 0 and sn_t.size > 1:
+        im = ax_ht.imshow(
+            sn_c,
+            origin="lower",
+            aspect="auto",
+            interpolation="nearest",
+            extent=(0.0, 1.0, float(sn_t[0]), float(sn_t[-1])),
+        )
+        ax_ht.set_xlabel(r"$x$")
+        ax_ht.set_ylabel(r"$t$")
+        ax_ht.set_title(r"$c(x,t)$ (snapshot cadence)")
+        fig.colorbar(im, ax=ax_ht, shrink=0.75)
+    else:
+        ax_ht.text(0.5, 0.5, "(no snapshots)", ha="center", va="center")
+        ax_ht.axis("off")
+
+    # Thickness + state shading
+    i = 0
+    while i < tt.size:
+        j = i
+        while j + 1 < tt.size and int(st[j + 1]) == int(st[i]):
+            j += 1
+        t_lo = float(tt[i]) - 0.5 * dt_med
+        t_hi = float(tt[j]) + 0.5 * dt_med
+        col = "#cfe8ff" if int(st[i]) == 0 else "#ffd6d6"
+        ax_th.axvspan(t_lo, t_hi, facecolor=col, alpha=0.45, linewidth=0, zorder=0)
+        i = j + 1
+
+    ax_th.plot(tt, th, color="k", lw=1.1, zorder=2)
+    ax_th.set_title(r"Cumulative thickness $\int r\,c|_{x=0}\,\mathrm{d}t$")
+    ax_th.set_xlabel(r"$t$")
+    ax_th.grid(True, alpha=0.25)
+
+    ax_txt.axis("off")
+    if include_params_panel:
+        cfg_text = _format_kinetic_config_text(cfg)
+        summ_text = _format_kinetic_summary_text(diagnostics)
+        ax_txt.text(
+            0.02,
+            0.98,
+            cfg_text,
+            transform=ax_txt.transAxes,
+            fontfamily="monospace",
+            fontsize=9,
+            verticalalignment="top",
+            horizontalalignment="left",
+        )
+        ax_txt.text(
+            0.52,
+            0.98,
+            summ_text,
+            transform=ax_txt.transAxes,
+            fontfamily="monospace",
+            fontsize=8,
+            verticalalignment="top",
+            horizontalalignment="left",
+        )
+    else:
+        ax_txt.text(0.5, 0.5, "", ha="center", va="center")
+
+    if title:
+        fig.suptitle(title, fontsize=12)
+
+    fig.savefig(out, dpi=dpi)
+    plt.close(fig)
+    return out
+
+
 def parse_run_stamp_utc(stamp: str) -> str | None:
     """Parse ``YYYYMMDDTHHMMSSZ`` run directory name to ``YYYY-MM-DD HH:MM UTC``."""
     try:
