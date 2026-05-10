@@ -29,6 +29,7 @@ def _geom_stage1(*, L: float, R: float, n: int) -> Geometry:
         chi=z,
         ring=jnp.asarray(m["ring"], dtype=jnp.float64),
         ring_accounting=jnp.asarray(m["ring_accounting"], dtype=jnp.float64),
+        ring_left=jnp.zeros_like(z),
         sigma_xx=jnp.asarray(sxx, dtype=jnp.float64),
         sigma_yy=jnp.asarray(syy, dtype=jnp.float64),
         sigma_xy=jnp.asarray(sxy, dtype=jnp.float64),

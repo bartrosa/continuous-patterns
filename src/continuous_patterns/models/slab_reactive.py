@@ -47,6 +47,7 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
     n = int(_require(gcfg, "n", where="config.geometry"))
     eps_scale = float(gcfg.get("eps_scale", 2.0))
     rim_width_px = int(gcfg.get("rim_width_px", 2))
+    rim_left_width_px = int(gcfg.get("rim_left_width_px", 0))
 
     dtype = jnp.float64 if cfg.get("precision") == "float64" else jnp.float32
     builder = MASK_BUILDERS["slab"]
@@ -54,6 +55,7 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
         L=L,
         n=n,
         rim_width_px=rim_width_px,
+        rim_left_width_px=rim_left_width_px,
         eps_scale=eps_scale,
         dtype=dtype,
     )
@@ -112,6 +114,7 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
         # should use the hard accounting mask rather than the smooth Gaussian.
         ring=_to(m["ring_accounting"]),
         ring_accounting=_to(m["ring_accounting"]),
+        ring_left=_to(m["ring_left"]),
         sigma_xx=_to(sxx),
         sigma_yy=_to(syy),
         sigma_xy=_to(sxy),

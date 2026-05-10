@@ -445,6 +445,7 @@ def slab_masks(
     L: float,
     n: int,
     rim_width_px: int = 2,
+    rim_left_width_px: int = 0,
     eps_scale: float = 2.0,
     dtype: DTypeLike = jnp.float32,
 ) -> dict[str, Array | float | int]:
@@ -462,6 +463,8 @@ def slab_masks(
         raise ValueError(f"n must be >= 1, got {n}")
     if rim_width_px < 1 or rim_width_px > n // 4:
         raise ValueError(f"rim_width_px must be in [1, n//4], got {rim_width_px}")
+    if rim_left_width_px < 0 or rim_left_width_px > n // 4:
+        raise ValueError(f"rim_left_width_px must be in [0, n//4], got {rim_left_width_px}")
 
     x, y, dx, _xc, _yc = cell_centered_xy(L=L, n=n, dtype=dtype)
     chi = jnp.ones((n, n), dtype=dtype)
@@ -478,12 +481,19 @@ def slab_masks(
         jnp.asarray(0.0, dtype=dtype),
     )
     ring_accounting = jnp.broadcast_to(ring_accounting, (n, n))
+    ring_left = jnp.where(
+        i_grid < jnp.asarray(rim_left_width_px, dtype=jnp.int32),
+        jnp.asarray(1.0, dtype=dtype),
+        jnp.asarray(0.0, dtype=dtype),
+    )
+    ring_left = jnp.broadcast_to(ring_left, (n, n))
 
     rv = jnp.abs(x - jnp.asarray(L, dtype=dtype))
     return {
         "chi": chi,
         "ring": ring,
         "ring_accounting": ring_accounting,
+        "ring_left": ring_left,
         "rv": rv,
         "dx": float(dx),
         "xc": float(0.5 * L),

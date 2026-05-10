@@ -102,6 +102,7 @@ class GeometrySpec(BaseModel):
     opening_angle: float | None = None
     theta_center: float | None = None
     rim_width_px: int = 2
+    rim_left_width_px: int = 0
 
     @model_validator(mode="after")
     def _geometry_required_fields(self) -> Self:
@@ -268,6 +269,11 @@ class GeometrySpec(BaseModel):
             if not (1 <= int(self.rim_width_px) <= int(self.n // 4)):
                 raise ValueError(
                     f"geometry.rim_width_px must be in [1, n//4] for slab, got {self.rim_width_px}"
+                )
+            if not (0 <= int(self.rim_left_width_px) <= int(self.n // 4)):
+                raise ValueError(
+                    "geometry.rim_left_width_px must be in [0, n//4] for slab, "
+                    f"got {self.rim_left_width_px}"
                 )
 
         if missing:
@@ -725,7 +731,15 @@ class RunConfigValidated(BaseModel):
     @model_validator(mode="after")
     def _validate_initial(self) -> Self:
         ini = InitialSpec.model_validate(self.initial, context={"n": int(self.geometry.n)})
-        return self.model_copy(update={"initial": ini.model_dump(mode="python")})
+        initial_validated = ini.model_dump(mode="python")
+        phys = dict(self.physics)
+        eta_wall = float(phys.get("eta_wall", 0.0))
+        if eta_wall < 0.0:
+            raise ValueError("physics.eta_wall must be >= 0")
+        if eta_wall > 1.0:
+            raise ValueError("physics.eta_wall must be <= 1.0")
+        phys["eta_wall"] = eta_wall
+        return self.model_copy(update={"initial": initial_validated, "physics": phys})
 
 
 @dataclass(frozen=True)
