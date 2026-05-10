@@ -37,6 +37,7 @@ class Geometry:
     chi: Array
     ring: Array
     ring_accounting: Array
+    ring_left: Array
     sigma_xx: Array
     sigma_yy: Array
     sigma_xy: Array
@@ -130,6 +131,7 @@ class SimParams:
     stress_coupling_B: float = 0.0
     k_rxn: float = 1.0
     c_sat: float = 0.0
+    eta_wall: float = 0.0
     c0: float = 1.0
     lambda_bar: float = 10.0
     c_ostwald: float = 0.5
@@ -180,6 +182,7 @@ def _G(
     phi_c: Array,
     phi_q: Array,
     phi_imp: Array,
+    geom: Geometry,
     prm: SimParams,
 ) -> Array:
     """Intrinsic precipitation rate with packing ceiling on all solid fractions (no ``χ``).
@@ -187,7 +190,10 @@ def _G(
     Ostwald partition still uses only ``(ψ_m, ψ_c)`` vs pre-step ``φ_m`` (PHYSICS §3);
     α-quartz is not fed by this channel — only by aging when configured.
     """
-    relu_c = jnp.maximum(c - prm.c_sat, 0.0)
+    c_sat_eff = jnp.asarray(prm.c_sat, dtype=c.dtype) - jnp.asarray(
+        prm.eta_wall, dtype=c.dtype
+    ) * jnp.asarray(geom.ring_left, dtype=c.dtype)
+    relu_c = jnp.maximum(c - c_sat_eff, 0.0)
     relu_p = jnp.maximum(
         1.0
         - _phi_contribution_to_packing(phi_m, prm.phi_m_potential)
@@ -348,7 +354,7 @@ def imex_step(
 
     G = jax.lax.cond(
         jnp.asarray(prm.reaction_active),
-        lambda cc: _G(cc[0], cc[1], cc[2], cc[3], cc[4], prm),
+        lambda cc: _G(cc[0], cc[1], cc[2], cc[3], cc[4], geom, prm),
         lambda cc: jnp.zeros_like(cc[0]),
         (c, phi_m, phi_c, phi_q, phi_imp),
     )

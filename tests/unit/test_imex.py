@@ -76,6 +76,7 @@ def _geometry_bulk(*, L: float, n: int) -> Geometry:
         chi=o,
         ring=z,
         ring_accounting=z,
+        ring_left=z,
         sigma_xx=z,
         sigma_yy=z,
         sigma_xy=z,
@@ -97,6 +98,7 @@ def _geometry_stage1(*, L: float, R: float, n: int) -> Geometry:
         chi=m["chi"],
         ring=m["ring"],
         ring_accounting=m["ring_accounting"],
+        ring_left=jnp.zeros_like(m["chi"]),
         sigma_xx=sxx,
         sigma_yy=syy,
         sigma_xy=sxy,
@@ -255,6 +257,7 @@ def test_mass_conservation_closed_system_stage2_with_psi_stress() -> None:
         chi=jnp.ones((n, n), dtype=jnp.float64),
         ring=z,
         ring_accounting=z,
+        ring_left=z,
         sigma_xx=sxx,
         sigma_yy=syy,
         sigma_xy=sxy,
@@ -553,8 +556,8 @@ def test_packing_ceiling_includes_quartz_channel() -> None:
     pc = jnp.asarray(0.45)
     pq = jnp.asarray(0.2)
     pim = jnp.asarray(0.0)
-    g = _G(c, pm, pc, pq, pim, prm)
-    assert float(g) == 0.0
+    g = _G(c, pm, pc, pq, pim, _geometry_bulk(L=1.0, n=1), prm)
+    assert float(g[0, 0]) == 0.0
 
 
 def test_G_positive_when_packing_allows() -> None:
@@ -564,5 +567,5 @@ def test_G_positive_when_packing_allows() -> None:
     pc = jnp.asarray(0.2)
     pq = jnp.asarray(0.2)
     pim = jnp.asarray(0.0)
-    g = _G(c, pm, pc, pq, pim, prm)
-    assert float(g) > 0.0
+    g = _G(c, pm, pc, pq, pim, _geometry_bulk(L=1.0, n=1), prm)
+    assert float(g[0, 0]) > 0.0
