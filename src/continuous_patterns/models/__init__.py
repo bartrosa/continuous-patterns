@@ -5,6 +5,6 @@ Import submodules explicitly, e.g. ``from continuous_patterns.models import cavi
 ``cfg["experiment"]["model"]``.
 """
 
-from . import bulk_relaxation, cavity_reactive, slab_reactive
+from . import bulk_relaxation, cavity_reactive, slab_kinetic, slab_reactive
 
-__all__ = ["bulk_relaxation", "cavity_reactive", "slab_reactive"]
+__all__ = ["bulk_relaxation", "cavity_reactive", "slab_kinetic", "slab_reactive"]
