@@ -24,6 +24,7 @@ from tqdm.auto import tqdm
 
 from continuous_patterns.core.diagnostics_kinetic import (
     compute_dwell_times,
+    compute_mean_dwell_period,
     compute_temporal_spectrum,
 )
 from continuous_patterns.core.types import SimResult, SimState
@@ -216,6 +217,8 @@ def simulate(
 
     dwell_L, dwell_H = compute_dwell_times(transitions, float(t))
     spec = compute_temporal_spectrum(c0_hist, dt)
+    n_tr_ev = int(len(transitions))
+    mean_period = compute_mean_dwell_period(dwell_L, dwell_H, n_tr_ev)
 
     wall_s = time.perf_counter() - t_wall0
 
@@ -234,6 +237,8 @@ def simulate(
         "dwell_H_std": dwell_H_std,
         "peak_period": float(spec["peak_period"]),
         "peak_frequency": float(spec["peak_freq"]),
+        "mean_dwell_period": float(mean_period["mean_dwell_period"]),
+        "mean_dwell_freq": float(mean_period["mean_dwell_freq"]),
         "thickness_final": float(thickness),
         "wall_time_s": float(wall_s),
         "n_steps": int(n_steps),
