@@ -148,3 +148,50 @@ def compute_temporal_spectrum(
         "peak_freq": pk_f,
         "peak_period": pk_period,
     }
+
+
+def compute_mean_dwell_period(
+    dwell_L_samples: np.ndarray,
+    dwell_H_samples: np.ndarray,
+    n_transitions: int,
+) -> dict[str, float]:
+    """Physical oscillation period as mean dwell-time sum.
+
+    More robust than FFT peak detection for high-frequency oscillations where the
+    Nyquist limit is approached.
+
+    Returns
+    -------
+    dict with keys:
+        mean_dwell_period: float
+            T_period ≈ mean(dwell_L) + mean(dwell_H). NaN if ``n_transitions < 2``.
+        mean_dwell_freq: float
+            1 / mean_dwell_period when period > 0, else NaN.
+        dwell_L_mean, dwell_H_mean: float
+            Echoed means for convenience (NaN if no samples).
+    """
+    if int(n_transitions) < 2:
+        nan = float("nan")
+        return {
+            "mean_dwell_period": nan,
+            "mean_dwell_freq": nan,
+            "dwell_L_mean": nan,
+            "dwell_H_mean": nan,
+        }
+
+    dl = np.asarray(dwell_L_samples, dtype=np.float64).ravel()
+    dh = np.asarray(dwell_H_samples, dtype=np.float64).ravel()
+    dl_mean = float(np.mean(dl)) if dl.size > 0 else float("nan")
+    dh_mean = float(np.mean(dh)) if dh.size > 0 else float("nan")
+
+    if np.isnan(dl_mean) or np.isnan(dh_mean):
+        period = float("nan")
+    else:
+        period = dl_mean + dh_mean
+
+    return {
+        "mean_dwell_period": period,
+        "mean_dwell_freq": (1.0 / period) if period > 0.0 and np.isfinite(period) else float("nan"),
+        "dwell_L_mean": dl_mean,
+        "dwell_H_mean": dh_mean,
+    }

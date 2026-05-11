@@ -57,3 +57,24 @@ def test_compute_temporal_spectrum_finds_known_period() -> None:
 def test_compute_transitions_raises_on_length_mismatch() -> None:
     with pytest.raises(ValueError):
         dk.compute_transitions(np.array([1.0]), np.array([0.0, 1.0]), c1=0.5, c2=0.1)
+
+
+def test_mean_dwell_period_basic() -> None:
+    """Symmetric L/H dwells: period = L + H."""
+    dwell_L = np.array([0.5, 0.5, 0.5])
+    dwell_H = np.array([0.3, 0.3, 0.3])
+    result = dk.compute_mean_dwell_period(dwell_L, dwell_H, n_transitions=6)
+    assert abs(result["mean_dwell_period"] - 0.8) < 1e-10
+
+
+def test_mean_dwell_period_no_transitions() -> None:
+    """No oscillation → NaN."""
+    result = dk.compute_mean_dwell_period(np.array([20.0]), np.array([]), n_transitions=0)
+    assert np.isnan(result["mean_dwell_period"])
+    assert np.isnan(result["mean_dwell_freq"])
+
+
+def test_mean_dwell_period_one_transition() -> None:
+    """One transition → still NaN (need ≥ 2 for full period)."""
+    result = dk.compute_mean_dwell_period(np.array([0.5]), np.array([0.3]), n_transitions=1)
+    assert np.isnan(result["mean_dwell_period"])
