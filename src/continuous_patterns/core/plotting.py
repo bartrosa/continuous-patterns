@@ -434,12 +434,10 @@ def plot_jablczynski(
     plt.close(fig)
 
 
-def _format_kinetic_config_text(cfg: dict[str, Any]) -> str:
-    """Plain-text CONFIG column for slab_kinetic figures."""
-    exp = cfg.get("experiment", {}) or {}
+def _format_slab_kinetic_config_body(cfg: dict[str, Any]) -> str:
+    """Multiline key: value block for CONFIG (no section header)."""
     geo = cfg.get("geometry", {}) or {}
     phys = cfg.get("physics", {}) or {}
-    stress = cfg.get("stress", {}) or {}
     tim = cfg.get("time", {}) or {}
     ini = cfg.get("initial", {}) or {}
 
@@ -450,52 +448,52 @@ def _format_kinetic_config_text(cfg: dict[str, Any]) -> str:
             return f"{float(x):g}"
         return str(x)
 
-    lines = [
-        "CONFIG",
-        "",
-        f"  model:           {exp.get('model', '?')}",
-        f"  stress.mode:     {stress.get('mode', 'none')}",
-        f"  geometry.type:   {geo.get('type', '?')}",
-        f"  n:               {geo.get('n', '?')}",
-        f"  T:               {_fmt(tim.get('T', '?'))}",
-        f"  dt_safety:       {_fmt(tim.get('dt_safety', '?'))}",
-        f"  snapshot_every:  {_fmt(tim.get('snapshot_every', '?'))}",
-        f"  Da:              {_fmt(phys.get('Da', '?'))}",
-        f"  kappa:           {_fmt(phys.get('kappa', '?'))}",
-        f"  c1:              {_fmt(phys.get('c1', '?'))}",
-        f"  c2:              {_fmt(phys.get('c2', '?'))}",
-        f"  initial.profile: {ini.get('profile', '?')}",
-    ]
-    return "\n".join(lines)
+    return "\n".join(
+        [
+            "model:           slab_kinetic",
+            f"geometry.n:      {geo.get('n', '?')}",
+            f"physics.Da:      {_fmt(phys.get('Da', '?'))}",
+            f"physics.kappa:   {_fmt(phys.get('kappa', '?'))}",
+            f"physics.c1:      {_fmt(phys.get('c1', '?'))}",
+            f"physics.c2:      {_fmt(phys.get('c2', '?'))}",
+            f"time.T:          {_fmt(tim.get('T', '?'))}",
+            f"time.dt_safety:  {_fmt(tim.get('dt_safety', '?'))}",
+            f"initial.profile: {ini.get('profile', '?')}",
+        ]
+    )
 
 
-def _format_kinetic_summary_text(diagnostics: dict[str, Any] | None) -> str:
-    """Plain-text SUMMARY column for slab_kinetic figures."""
-    lines = ["SUMMARY", ""]
-    if diagnostics is None:
-        lines.append("  (not provided)")
-        return "\n".join(lines)
-    keys = [
-        ("n_transitions", "n_transitions", "{:d}"),
-        ("dwell_L_mean", "dwell_L_mean", "{:.4g}"),
-        ("dwell_L_std", "dwell_L_std", "{:.4g}"),
-        ("dwell_H_mean", "dwell_H_mean", "{:.4g}"),
-        ("dwell_H_std", "dwell_H_std", "{:.4g}"),
-        ("peak_period", "peak_period", "{:.4g}"),
-        ("peak_frequency", "peak_frequency", "{:.4g}"),
-        ("thickness_final", "thickness_final", "{:.4g}"),
-        ("n_steps", "n_steps", "{:d}"),
-        ("dt", "dt", "{:.4g}"),
-        ("wall_time_s", "wall_time_s", "{:.2f}s"),
-    ]
-    for label, key, fmt in keys:
-        if key not in diagnostics:
-            continue
-        val = diagnostics[key]
+def _format_slab_kinetic_summary_body(summary: dict[str, Any] | None) -> str:
+    """Multiline key: value block for SUMMARY (no section header)."""
+    if summary is None:
+        return "(not provided)"
+
+    def _g(key: str, default: Any = None) -> Any:
+        return summary[key] if key in summary else default
+
+    def _fn(key: str) -> float:
+        v = _g(key, None)
+        if v is None:
+            return float("nan")
         try:
-            lines.append(f"  {label + ':':<18} " + fmt.format(val))
+            return float(v)
         except (TypeError, ValueError):
-            lines.append(f"  {label + ':':<18} {val!s}")
+            return float("nan")
+
+    n_tr = int(_g("n_transitions", 0) or 0)
+    lines = [
+        f"n_transitions:   {n_tr}",
+        f"dwell_L_mean:    {_fn('dwell_L_mean'):.4f}",
+        f"dwell_L_std:     {_fn('dwell_L_std'):.4f}",
+        f"dwell_H_mean:    {_fn('dwell_H_mean'):.4f}",
+        f"dwell_H_std:     {_fn('dwell_H_std'):.4f}",
+        f"peak_period:     {_fn('peak_period'):.4f}",
+        f"peak_freq:       {_fn('peak_frequency'):.4f}",
+        f"thickness_final: {_fn('thickness_final'):.4f}",
+        f"wall_time_s:     {_fn('wall_time_s'):.2f}",
+        f"n_steps:         {int(_g('n_steps', 0) or 0)}",
+        f"dt:              {_fn('dt'):.3e}",
+    ]
     return "\n".join(lines)
 
 
@@ -517,7 +515,7 @@ def plot_slab_kinetic_figures_final(
     include_params_panel: bool = True,
     dpi: int = 120,
 ) -> Path:
-    """2×2 kinetic panels + CONFIG/SUMMARY (style aligned with ``plot_fields_final``)."""
+    """Three top panels + full-width CONFIG/SUMMARY row (no overlapping text)."""
     out = Path(run_root)
     if out.suffix.lower() != ".png":
         out = out / "figures_final.png"
@@ -528,12 +526,19 @@ def plot_slab_kinetic_figures_final(
     st = np.asarray(st_hist, dtype=np.int32).ravel()
     th = np.asarray(th_hist, dtype=np.float64).ravel()
 
-    fig = plt.figure(figsize=(9.0, 9.5), constrained_layout=True)
-    gs = gridspec.GridSpec(2, 2, figure=fig, height_ratios=[1.0, 1.0])
+    fig = plt.figure(figsize=(15.0, 10.0), constrained_layout=False)
+    gs = gridspec.GridSpec(
+        2,
+        3,
+        figure=fig,
+        height_ratios=[2, 1],
+        hspace=0.30,
+        wspace=0.30,
+    )
     ax_c0 = fig.add_subplot(gs[0, 0])
     ax_ht = fig.add_subplot(gs[0, 1])
-    ax_th = fig.add_subplot(gs[1, 0])
-    ax_txt = fig.add_subplot(gs[1, 1])
+    ax_th = fig.add_subplot(gs[0, 2])
+    ax_meta = fig.add_subplot(gs[1, :])
 
     # Background L/H bands on c(0,t)
     if tt.size > 1:
@@ -598,37 +603,58 @@ def plot_slab_kinetic_figures_final(
     ax_th.set_xlabel(r"$t$")
     ax_th.grid(True, alpha=0.25)
 
-    ax_txt.axis("off")
+    ax_meta.axis("off")
     if include_params_panel:
-        cfg_text = _format_kinetic_config_text(cfg)
-        summ_text = _format_kinetic_summary_text(diagnostics)
-        ax_txt.text(
+        cfg_body = _format_slab_kinetic_config_body(cfg)
+        summ_body = _format_slab_kinetic_summary_body(diagnostics)
+        ax_meta.text(
             0.02,
-            0.98,
-            cfg_text,
-            transform=ax_txt.transAxes,
-            fontfamily="monospace",
-            fontsize=9,
+            0.95,
+            "CONFIG",
+            transform=ax_meta.transAxes,
+            family="monospace",
+            fontsize=11,
+            fontweight="bold",
             verticalalignment="top",
             horizontalalignment="left",
         )
-        ax_txt.text(
+        ax_meta.text(
+            0.02,
+            0.85,
+            cfg_body,
+            transform=ax_meta.transAxes,
+            family="monospace",
+            fontsize=10,
+            verticalalignment="top",
+            horizontalalignment="left",
+        )
+        ax_meta.text(
             0.52,
-            0.98,
-            summ_text,
-            transform=ax_txt.transAxes,
-            fontfamily="monospace",
-            fontsize=8,
+            0.95,
+            "SUMMARY",
+            transform=ax_meta.transAxes,
+            family="monospace",
+            fontsize=11,
+            fontweight="bold",
+            verticalalignment="top",
+            horizontalalignment="left",
+        )
+        ax_meta.text(
+            0.52,
+            0.85,
+            summ_body,
+            transform=ax_meta.transAxes,
+            family="monospace",
+            fontsize=10,
             verticalalignment="top",
             horizontalalignment="left",
         )
     else:
-        ax_txt.text(0.5, 0.5, "", ha="center", va="center")
+        ax_meta.text(0.5, 0.5, "", ha="center", va="center")
 
     if title:
-        fig.suptitle(title, fontsize=12)
-
-    fig.savefig(out, dpi=dpi)
+        fig.suptitle(title, fontsize=14)
+    fig.savefig(out, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     return out
 
