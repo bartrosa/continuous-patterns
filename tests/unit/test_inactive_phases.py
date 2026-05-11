@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 from continuous_patterns.core.imex import Geometry, SimParams, imex_step
 from continuous_patterns.core.masks import circular_cavity_masks
-from continuous_patterns.core.spectral import k_vectors
+from continuous_patterns.core.spectral_ops import PeriodicOps
 from continuous_patterns.core.stress import none as stress_none
 from continuous_patterns.core.stress import uniform_biaxial
 
@@ -15,23 +15,17 @@ from continuous_patterns.core.stress import uniform_biaxial
 def _stage1_geometry_f32(*, L: float = 200.0, R: float = 80.0, n: int = 64) -> Geometry:
     """Small Stage I geometry in float32, matching production precision."""
     m = circular_cavity_masks(L=L, R=R, n=n, eps_scale=2.0, dtype=jnp.float32)
-    k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
     sxx, syy, sxy = stress_none(L=L, n=n, dtype=jnp.float32)
-    f32 = jnp.float32
     return Geometry(
         chi=m["chi"],
         ring=m["ring"],
         ring_accounting=m["ring_accounting"],
+        ring_left=jnp.zeros_like(m["chi"]),
         sigma_xx=sxx,
         sigma_yy=syy,
         sigma_xy=sxy,
-        k_sq=jnp.asarray(k_sq, dtype=f32),
-        kx_sq=jnp.asarray(kx_sq, dtype=f32),
-        ky_sq=jnp.asarray(ky_sq, dtype=f32),
-        kx_wave=jnp.asarray(kx_wave, dtype=f32),
-        ky_wave=jnp.asarray(ky_wave, dtype=f32),
-        k_four=jnp.asarray(k_four, dtype=f32),
-        rv=jnp.asarray(m["rv"], dtype=f32),
+        spectral_ops=PeriodicOps(n=n, L=L),
+        rv=jnp.asarray(m["rv"], dtype=jnp.float32),
         dx=float(m["dx"]),
         L=float(m["L"]),
         R=float(m["R"]),
@@ -46,23 +40,17 @@ def _stage1_geometry_f32_stress(
 ) -> Geometry:
     """Stage I float32 geometry with uniform biaxial stress (ψ-split path on)."""
     m = circular_cavity_masks(L=L, R=R, n=n, eps_scale=2.0, dtype=jnp.float32)
-    k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
     sxx, syy, sxy = uniform_biaxial(L=L, n=n, sigma_0=sigma_0, dtype=jnp.float32)
-    f32 = jnp.float32
     return Geometry(
         chi=m["chi"],
         ring=m["ring"],
         ring_accounting=m["ring_accounting"],
+        ring_left=jnp.zeros_like(m["chi"]),
         sigma_xx=sxx,
         sigma_yy=syy,
         sigma_xy=sxy,
-        k_sq=jnp.asarray(k_sq, dtype=f32),
-        kx_sq=jnp.asarray(kx_sq, dtype=f32),
-        ky_sq=jnp.asarray(ky_sq, dtype=f32),
-        kx_wave=jnp.asarray(kx_wave, dtype=f32),
-        ky_wave=jnp.asarray(ky_wave, dtype=f32),
-        k_four=jnp.asarray(k_four, dtype=f32),
-        rv=jnp.asarray(m["rv"], dtype=f32),
+        spectral_ops=PeriodicOps(n=n, L=L),
+        rv=jnp.asarray(m["rv"], dtype=jnp.float32),
         dx=float(m["dx"]),
         L=float(m["L"]),
         R=float(m["R"]),

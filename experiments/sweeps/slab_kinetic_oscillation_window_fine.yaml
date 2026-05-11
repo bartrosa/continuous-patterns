@@ -1,0 +1,17 @@
+# Fine re-sweep of narrow-hysteresis cells (Δc < 0.05) at dt_safety=0.1.
+#
+# Cartesian axes are not used — ``scripts/run_slab_kinetic_fine_resweep.py`` iterates
+# explicit (c1, c2) pairs and matches output layout of other slab_kinetic sweeps.
+
+sweep:
+  name: slab_kinetic_oscillation_window_fine
+  description: |
+    Fine re-sweep of narrow-hysteresis cells with dt_safety=0.1 (see script).
+  base_config: experiments/canonical/slab_kinetic/baseline.yaml
+  overrides:
+    geometry.n: 200
+    time.T: 20.0
+    time.snapshot_every: 200
+    physics.Da: 1.0
+    physics.kappa: 3.0
+    time.dt_safety: 0.1

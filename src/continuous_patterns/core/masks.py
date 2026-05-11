@@ -440,10 +440,75 @@ def rectangular_slot_cavity_masks(
     }
 
 
+def slab_masks(
+    *,
+    L: float,
+    n: int,
+    rim_width_px: int = 2,
+    rim_left_width_px: int = 0,
+    eps_scale: float = 2.0,
+    dtype: DTypeLike = jnp.float32,
+) -> dict[str, Array | float | int]:
+    """Build slab masks: ``chi ≡ 1`` and a right-edge rim strip.
+
+    Slab geometry corresponds to a rectangular domain with mixed boundary
+    conditions in the solver layer: no-flux on one x-wall, Dirichlet rim on the
+    opposite x-wall, periodic in y. Mask-wise, this means:
+
+    - no cavity cutout (``chi`` is all ones),
+    - Gaussian rim concentrated near the right edge,
+    - hard ``ring_accounting`` strip of width ``rim_width_px`` at the right edge.
+    """
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
+    if rim_width_px < 1 or rim_width_px > n // 4:
+        raise ValueError(f"rim_width_px must be in [1, n//4], got {rim_width_px}")
+    if rim_left_width_px < 0 or rim_left_width_px > n // 4:
+        raise ValueError(f"rim_left_width_px must be in [0, n//4], got {rim_left_width_px}")
+
+    x, y, dx, _xc, _yc = cell_centered_xy(L=L, n=n, dtype=dtype)
+    chi = jnp.ones((n, n), dtype=dtype)
+
+    sigma_ring = eps_transition(dx=dx, eps_scale=eps_scale, dtype=dtype)
+    ring_raw = jnp.exp(-0.5 * ((x - L) / sigma_ring) ** 2)
+    ring = ring_raw / jnp.maximum(jnp.max(ring_raw), jnp.asarray(1e-30, dtype=dtype))
+
+    i_grid = jnp.arange(n, dtype=jnp.int32)[:, None]
+    rim_threshold = jnp.asarray(n - rim_width_px, dtype=jnp.int32)
+    ring_accounting = jnp.where(
+        i_grid >= rim_threshold,
+        jnp.asarray(1.0, dtype=dtype),
+        jnp.asarray(0.0, dtype=dtype),
+    )
+    ring_accounting = jnp.broadcast_to(ring_accounting, (n, n))
+    ring_left = jnp.where(
+        i_grid < jnp.asarray(rim_left_width_px, dtype=jnp.int32),
+        jnp.asarray(1.0, dtype=dtype),
+        jnp.asarray(0.0, dtype=dtype),
+    )
+    ring_left = jnp.broadcast_to(ring_left, (n, n))
+
+    rv = jnp.abs(x - jnp.asarray(L, dtype=dtype))
+    return {
+        "chi": chi,
+        "ring": ring,
+        "ring_accounting": ring_accounting,
+        "ring_left": ring_left,
+        "rv": rv,
+        "dx": float(dx),
+        "xc": float(0.5 * L),
+        "yc": float(0.5 * L),
+        "R": 0.0,
+        "L": float(L),
+        "n": int(n),
+    }
+
+
 MASK_BUILDERS: dict[str, Callable[..., dict[str, Array | float | int]]] = {
     "circular_cavity": circular_cavity_masks,
     "elliptic_cavity": elliptic_cavity_masks,
     "polygon_cavity": polygon_cavity_masks,
     "wedge_cavity": wedge_cavity_masks,
     "rectangular_slot": rectangular_slot_cavity_masks,
+    "slab": slab_masks,
 }

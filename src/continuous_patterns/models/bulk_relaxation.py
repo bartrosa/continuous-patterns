@@ -37,7 +37,7 @@ from continuous_patterns.core.diagnostics_stage2 import (
 )
 from continuous_patterns.core.imex import Geometry, SimParams
 from continuous_patterns.core.io import apply_physics_phases_legacy_shim
-from continuous_patterns.core.spectral import k_vectors
+from continuous_patterns.core.spectral_ops import PeriodicOps
 from continuous_patterns.core.stress import (
     STRESS_BUILDERS,
     apply_pore_pressure,
@@ -89,7 +89,7 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
     dtype = jnp.float64 if cfg.get("precision") == "float64" else jnp.float32
     chi, ring, ring_accounting, rv = _bulk_geometry_arrays(L=L, n=n, dtype=dtype)
 
-    k_sq, kx_sq, ky_sq, kx_wave, ky_wave, k_four = k_vectors(L=L, n=n)
+    spectral_ops = PeriodicOps(n=n, L=L)
 
     st = _require(cfg, "stress", where="config")
     smode = _require(st, "mode", where="config.stress")
@@ -137,15 +137,11 @@ def build_geometry(cfg: dict[str, Any]) -> Geometry:
         chi=chi,
         ring=ring,
         ring_accounting=ring_accounting,
+        ring_left=jnp.zeros_like(chi),
         sigma_xx=_to(sxx),
         sigma_yy=_to(syy),
         sigma_xy=_to(sxy),
-        k_sq=jnp.asarray(k_sq, dtype=dtype),
-        kx_sq=jnp.asarray(kx_sq, dtype=dtype),
-        ky_sq=jnp.asarray(ky_sq, dtype=dtype),
-        kx_wave=jnp.asarray(kx_wave, dtype=dtype),
-        ky_wave=jnp.asarray(ky_wave, dtype=dtype),
-        k_four=jnp.asarray(k_four, dtype=dtype),
+        spectral_ops=spectral_ops,
         rv=rv,
         dx=L / n,
         L=L,
@@ -225,6 +221,7 @@ def build_sim_params(cfg: dict[str, Any]) -> SimParams:
         stress_coupling_B=float(st.get("stress_coupling_B", 0.0)),
         k_rxn=float(ph.get("k_rxn", 0.0)),
         c_sat=float(ph.get("c_sat", 0.0)),
+        eta_wall=float(ph.get("eta_wall", 0.0)),
         c0=float(_require(ph, "c_0", where="physics")),
         lambda_bar=float(lambda_bar),
         c_ostwald=float(_require(ph, "c_ostwald", where="physics")),

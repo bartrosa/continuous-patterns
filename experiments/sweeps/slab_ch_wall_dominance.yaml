@@ -1,0 +1,17 @@
+sweep:
+  name: slab_ch_wall_dominance
+  base_config: experiments/canonical/slab/run_slab_ch.yaml
+  description: |
+    2D sweep eta_wall × c_0 with c_init=0.2, fixed seed at left wall.
+    Tests whether stronger left-wall nucleation + weaker rim Dirichlet
+    shifts the front origin to the left.
+  axes:
+    - name: eta_wall
+      path: physics.eta_wall
+      values: [0.3, 0.6, 1.0]
+    - name: c_0
+      path: physics.c_0
+      values: [0.4, 0.7, 1.0]
+
+overrides:
+  output.save_snapshots_h5: true

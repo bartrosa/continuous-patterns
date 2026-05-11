@@ -17,6 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import jax
 import numpy as np
 
 from continuous_patterns.core.io import (
@@ -32,17 +33,26 @@ from continuous_patterns.core.io import (
 from continuous_patterns.core.plotting import (
     parse_run_stamp_utc,
     plot_jablczynski,
+    plot_slab_kinetic_figures_final,
     write_evolution_gif,
 )
 from continuous_patterns.core.types import SimResult
-from continuous_patterns.models import bulk_relaxation, cavity_reactive
+from continuous_patterns.models import (
+    bulk_relaxation,
+    cavity_reactive,
+    slab_kinetic,
+    slab_reactive,
+)
 
 MODEL_DISPATCH: dict[str, Any] = {
     "cavity_reactive": cavity_reactive.simulate,
     "bulk_relaxation": bulk_relaxation.simulate,
+    "slab_reactive": slab_reactive.simulate,
+    "slab_kinetic": slab_kinetic.simulate,
 }
 
 logger = logging.getLogger(__name__)
+_warned_cuda_kernel_version_note = False
 
 _LOG_FORMAT = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -102,6 +112,19 @@ def run_one(
     if model_name not in MODEL_DISPATCH:
         raise ValueError(f"Unknown model: {model_name!r}. Available: {sorted(MODEL_DISPATCH)}")
     simulate_fn = MODEL_DISPATCH[model_name]
+    global _warned_cuda_kernel_version_note
+    if (
+        not _warned_cuda_kernel_version_note
+        and jax.default_backend() == "gpu"
+        and model_name != "slab_kinetic"
+    ):
+        logger.warning(
+            "CUDA note: messages like "
+            "'cuda_executor ... Could not get kernel mode driver version' "
+            "are a known XLA logging quirk on some driver stacks. "
+            "If the run progresses normally, they are typically non-fatal."
+        )
+        _warned_cuda_kernel_version_note = True
 
     cfg.setdefault("output", {})
     cfg["output"]["record_spectral_mass_diagnostic"] = True
@@ -126,38 +149,94 @@ def run_one(
             assert paths is not None
             save_run_config(paths.config_yaml, cfg)
             save_summary(paths.summary_json, result.diagnostics)
-            save_final_state_npz(
-                paths.final_state_npz,
-                phi_m=np.asarray(result.state_final.phi_m),
-                phi_c=np.asarray(result.state_final.phi_c),
-                c=np.asarray(result.state_final.c),
-                phi_q=np.asarray(result.state_final.phi_q),
-                phi_imp=np.asarray(result.state_final.phi_imp),
-                chi=None,
-            )
-            gcfg = cfg["geometry"]
+            gcfg = cfg.get("geometry", {})
             include_panel = bool(cfg.get("output", {}).get("include_params_panel", True))
             ts_human = parse_run_stamp_utc(paths.root.name)
             exp_name = str(cfg["experiment"]["name"])
             fig_title = f"{exp_name} — {ts_human}" if ts_human else exp_name
-            params_for_panel: dict[str, Any] | None = None
-            if include_panel:
-                params_for_panel = dict(cfg)
-                params_for_panel["_diagnostics"] = {**result.diagnostics, "wall_time_s": wall_s}
-            meta = result.meta if isinstance(result.meta, dict) else {}
-            meta_r = meta.get("effective_cavity_R")
-            cavity_r = float(meta_r) if meta_r is not None else float(gcfg.get("R", 0.0))
-            write_figures_final(
-                paths.root,
-                phi_m=np.asarray(result.state_final.phi_m),
-                phi_c=np.asarray(result.state_final.phi_c),
-                c=np.asarray(result.state_final.c),
-                L=float(gcfg["L"]),
-                R=cavity_r,
-                title=fig_title,
-                params=params_for_panel,
-                include_params_panel=include_panel,
-            )
+
+            if model_name == "slab_kinetic":
+                meta = result.meta if isinstance(result.meta, dict) else {}
+                sk_raw = meta.get("slab_kinetic")
+                sk: dict[str, Any] = sk_raw if isinstance(sk_raw, dict) else {}
+                c_final = np.asarray(result.state_final.c, dtype=np.float64).ravel()
+                np.savez_compressed(
+                    paths.final_state_npz,
+                    c_final=c_final,
+                    state_final=np.asarray(str(sk.get("state_final_str", "L"))),
+                    thickness_final=float(sk.get("thickness_final", 0.0)),
+                    t_final=float(sk.get("t_final", 0.0)),
+                )
+                np.savez_compressed(
+                    paths.root / "history.npz",
+                    t_history=np.asarray(sk["t_history"]),
+                    c_at_x0_history=np.asarray(sk["c_at_x0_history"]),
+                    state_history=np.asarray(sk["state_history"]),
+                    thickness_history=np.asarray(sk["thickness_history"]),
+                )
+                np.savez_compressed(
+                    paths.root / "snapshots.npz",
+                    snapshots_t=np.asarray(sk["snapshots_t"]),
+                    snapshots_c=np.asarray(sk["snapshots_c"]),
+                )
+                tr_raw = sk.get("transitions")
+                transitions_list: list[tuple[float, str]] = []
+                if isinstance(tr_raw, list):
+                    for item in tr_raw:
+                        if isinstance(item, tuple) and len(item) == 2:
+                            transitions_list.append((float(item[0]), str(item[1])))
+                        elif isinstance(item, list) and len(item) == 2:
+                            transitions_list.append((float(item[0]), str(item[1])))
+                diag_panel = {**result.diagnostics, "wall_time_s": wall_s}
+                plot_slab_kinetic_figures_final(
+                    paths.root,
+                    t_hist=np.asarray(sk["t_history"]),
+                    c0_hist=np.asarray(sk["c_at_x0_history"]),
+                    st_hist=np.asarray(sk["state_history"]),
+                    th_hist=np.asarray(sk["thickness_history"]),
+                    snapshots_t=np.asarray(sk["snapshots_t"]),
+                    snapshots_c=np.asarray(sk["snapshots_c"]),
+                    c1=float(cfg["physics"]["c1"]),
+                    c2=float(cfg["physics"]["c2"]),
+                    transitions=transitions_list,
+                    cfg=cfg,
+                    diagnostics=diag_panel,
+                    title=fig_title,
+                    include_params_panel=include_panel,
+                )
+            else:
+                save_final_state_npz(
+                    paths.final_state_npz,
+                    phi_m=np.asarray(result.state_final.phi_m),
+                    phi_c=np.asarray(result.state_final.phi_c),
+                    c=np.asarray(result.state_final.c),
+                    phi_q=np.asarray(result.state_final.phi_q),
+                    phi_imp=np.asarray(result.state_final.phi_imp),
+                    chi=None,
+                )
+                params_for_panel: dict[str, Any] | None = None
+                if include_panel:
+                    params_for_panel = dict(cfg)
+                    params_for_panel["_diagnostics"] = {**result.diagnostics, "wall_time_s": wall_s}
+                meta = result.meta if isinstance(result.meta, dict) else {}
+                meta_r = meta.get("effective_cavity_R")
+                gcfg_r = gcfg.get("R", 0.0)
+                cavity_r = (
+                    float(meta_r)
+                    if meta_r is not None
+                    else float(0.0 if gcfg_r is None else gcfg_r)
+                )
+                write_figures_final(
+                    paths.root,
+                    phi_m=np.asarray(result.state_final.phi_m),
+                    phi_c=np.asarray(result.state_final.phi_c),
+                    c=np.asarray(result.state_final.c),
+                    L=float(gcfg["L"]),
+                    R=cavity_r,
+                    title=fig_title,
+                    params=params_for_panel,
+                    include_params_panel=include_panel,
+                )
             out = cfg.get("output", {})
             if bool(out.get("save_jablczynski_plot", False)):
                 jab = result.diagnostics.get("jab_canonical")
@@ -199,8 +278,8 @@ def run_one(
                     write_evolution_gif(
                         gif_snaps,
                         gif_path,
-                        L=float(gcfg["L"]),
-                        R=float(gcfg.get("R", 0.0)),
+                        L=float(gcfg.get("L", 1.0)),
+                        R=float(0.0 if gcfg.get("R", 0.0) is None else gcfg.get("R", 0.0)),
                         fps=fps,
                         field_name="phi_m",
                     )

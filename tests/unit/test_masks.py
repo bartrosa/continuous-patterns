@@ -15,6 +15,7 @@ from continuous_patterns.core.masks import (
     elliptic_cavity_masks,
     polygon_cavity_masks,
     rectangular_slot_cavity_masks,
+    slab_masks,
     wedge_cavity_masks,
 )
 
@@ -212,3 +213,31 @@ def test_mask_builders_dispatch_new_types() -> None:
     assert e["chi"].shape == (32, 32)
     p = MASK_BUILDERS["polygon_cavity"](L=50.0, n=32, n_sides=5, R=10.0)
     assert p["chi"].shape == (32, 32)
+
+
+def test_slab_mask_chi_unity() -> None:
+    m = slab_masks(L=100.0, n=64, rim_width_px=2, eps_scale=2.0)
+    chi = m["chi"]
+    assert jnp.all(chi == 1.0)
+
+
+def test_slab_ring_localized_at_right_edge() -> None:
+    m = slab_masks(L=100.0, n=64, rim_width_px=2, eps_scale=2.0)
+    ring = m["ring"]
+    n = int(m["n"])
+    mid_row = n // 2
+    right_row = n - 1
+    right_mean = float(jnp.mean(ring[right_row, :]))
+    mid_mean = float(jnp.mean(ring[mid_row, :]))
+    assert right_mean > 0.5
+    assert mid_mean < 1e-3
+
+
+def test_slab_ring_accounting_correct_width() -> None:
+    n = 64
+    rim_width_px = 3
+    m = slab_masks(L=100.0, n=n, rim_width_px=rim_width_px, eps_scale=2.0)
+    ring_accounting = m["ring_accounting"]
+    assert float(jnp.mean(ring_accounting[-rim_width_px:, :])) == pytest.approx(1.0, abs=0.0)
+    assert float(jnp.mean(ring_accounting[:-rim_width_px, :])) == pytest.approx(0.0, abs=0.0)
+    assert float(jnp.sum(ring_accounting[:, 0])) == pytest.approx(float(rim_width_px))

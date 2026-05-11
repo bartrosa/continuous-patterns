@@ -454,6 +454,77 @@ geometry:
     assert load_run_config(p2)["geometry"]["R_outer"] == 40.0
 
 
+def test_geometry_spec_slab_load(tmp_path: Path) -> None:
+    slab = """
+geometry:
+  type: slab
+  L: 100.0
+  n: 1024
+  rim_width_px: 2
+  eps_scale: 2.0
+"""
+    p = tmp_path / "slab.yaml"
+    p.write_text(_base_card(slab), encoding="utf-8")
+    cfg = load_run_config(p)
+    assert cfg["geometry"]["type"] == "slab"
+    assert cfg["geometry"]["L"] == pytest.approx(100.0)
+    assert cfg["geometry"]["n"] == 1024
+    assert cfg["geometry"]["rim_width_px"] == 2
+
+
+def test_geometry_spec_slab_rejects_R(tmp_path: Path) -> None:
+    slab_bad = """
+geometry:
+  type: slab
+  L: 100.0
+  n: 1024
+  R: 30.0
+  rim_width_px: 2
+  eps_scale: 2.0
+"""
+    p = tmp_path / "slab_bad_R.yaml"
+    p.write_text(_base_card(slab_bad), encoding="utf-8")
+    with pytest.raises(ValidationError, match="must not set"):
+        load_run_config(p)
+
+
+def test_initial_spec_slab_seed_fields_load(tmp_path: Path) -> None:
+    slab_seed = """
+geometry:
+  type: slab
+  L: 100.0
+  n: 128
+  rim_width_px: 2
+  eps_scale: 2.0
+initial:
+  phi_m_wall_layer: 0.5
+  phi_m_wall_width_px: 2
+"""
+    p = tmp_path / "slab_seed.yaml"
+    p.write_text(_base_card(slab_seed), encoding="utf-8")
+    cfg = load_run_config(p)
+    assert cfg["initial"]["phi_m_wall_layer"] == pytest.approx(0.5)
+    assert cfg["initial"]["phi_m_wall_width_px"] == 2
+
+
+def test_initial_spec_slab_seed_width_rejected_when_too_large(tmp_path: Path) -> None:
+    slab_bad = """
+geometry:
+  type: slab
+  L: 100.0
+  n: 64
+  rim_width_px: 2
+  eps_scale: 2.0
+initial:
+  phi_m_wall_layer: 0.5
+  phi_m_wall_width_px: 20
+"""
+    p = tmp_path / "slab_seed_bad.yaml"
+    p.write_text(_base_card(slab_bad), encoding="utf-8")
+    with pytest.raises(ValidationError, match="phi_m_wall_width_px"):
+        load_run_config(p)
+
+
 def test_geometry_spec_missing_required_raises(tmp_path: Path) -> None:
     bad_elliptic = """
 geometry:
@@ -684,3 +755,77 @@ initial:
     cfg = load_run_config(p)
     assert cfg["experiment"]["scenario"] == "open_inflow"
     assert cfg["initial"]["scenario"] == "open_inflow"
+
+
+def test_slab_kinetic_config_loads() -> None:
+    root = Path(__file__).resolve().parents[2]
+    card = root / "experiments" / "canonical" / "slab_kinetic" / "baseline.yaml"
+    cfg = load_run_config(card)
+    assert cfg["experiment"]["model"] == "slab_kinetic"
+    assert cfg["geometry"]["type"] == "kinetic_1d"
+
+
+def test_slab_kinetic_rejects_2d_phase_fields(tmp_path: Path) -> None:
+    p = tmp_path / "sk_bad_phys.yaml"
+    p.write_text(
+        """
+experiment:
+  name: bad
+  model: slab_kinetic
+  seed: 1
+geometry:
+  type: kinetic_1d
+  n: 64
+physics:
+  Da: 1.0
+  kappa: 3.0
+  c1: 0.49
+  c2: 0.10
+  gamma: 4.0
+stress:
+  mode: none
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+  dt_safety: 0.4
+initial:
+  profile: linear
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="physics must not set"):
+        load_run_config(p)
+
+
+def test_slab_kinetic_rejects_geometry_L(tmp_path: Path) -> None:
+    p = tmp_path / "sk_bad_geo.yaml"
+    p.write_text(
+        """
+experiment:
+  name: bad
+  model: slab_kinetic
+  seed: 1
+geometry:
+  type: kinetic_1d
+  n: 64
+  L: 100.0
+physics:
+  Da: 1.0
+  kappa: 3.0
+  c1: 0.49
+  c2: 0.10
+stress:
+  mode: none
+time:
+  dt: 0.01
+  T: 1.0
+  snapshot_every: 10
+  dt_safety: 0.4
+initial:
+  profile: linear
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError):
+        load_run_config(p)

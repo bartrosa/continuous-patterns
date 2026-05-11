@@ -2,15 +2,12 @@ experiment:
   name: medium_pinning
   model: cavity_reactive
   seed: 42
-  description: |
-    Q1/Q2 baseline: moderate pinning via γ=4 and slow moganite mobility.
-    Ratchet active in [0.3, 0.5]. Main paper v2 reference configuration.
 
 geometry:
   type: circular_cavity
-  L: 200.0
-  R: 80.0
-  n: 512
+  L: 100.0
+  n: 256
+  R: 30.0
   eps_scale: 2.0
 
 physics:
@@ -35,9 +32,11 @@ stress:
   mode: none
   sigma_0: 0.0
   stress_coupling_B: 0.0
-  stress_eps_factor: 3.0
 
 time:
+  dt: 0.01
   T: 10000.0
+  snapshot_every: 500
 
-initial: {}
+output:
+  save_final_state: true

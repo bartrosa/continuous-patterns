@@ -25,6 +25,7 @@ from jax.typing import ArrayLike
 
 from continuous_patterns.core.gravity import body_force_advection_y, rim_ramp_field
 from continuous_patterns.core.potentials import POTENTIAL_BUILDERS, barrier_prime
+from continuous_patterns.core.spectral_ops import SpectralOps
 from continuous_patterns.core.stress import mu_stress_real
 from continuous_patterns.core.types import PhasePotentialParams
 
@@ -36,15 +37,11 @@ class Geometry:
     chi: Array
     ring: Array
     ring_accounting: Array
+    ring_left: Array
     sigma_xx: Array
     sigma_yy: Array
     sigma_xy: Array
-    k_sq: Array
-    kx_sq: Array
-    ky_sq: Array
-    kx_wave: Array
-    ky_wave: Array
-    k_four: Array
+    spectral_ops: SpectralOps
     rv: Array
     dx: float
     L: float
@@ -52,6 +49,30 @@ class Geometry:
     n: int
     xc: float
     yc: float
+
+    @property
+    def k_sq(self) -> Array:
+        return jnp.asarray(self.spectral_ops.laplacian_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def k_four(self) -> Array:
+        return jnp.asarray(self.spectral_ops.biharmonic_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def kx_sq(self) -> Array:
+        return jnp.asarray(self.spectral_ops.kx_sq_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def ky_sq(self) -> Array:
+        return jnp.asarray(self.spectral_ops.ky_sq_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def kx_wave(self) -> Array:
+        return jnp.asarray(self.spectral_ops.kx_wave_symbol(), dtype=self.chi.dtype)
+
+    @property
+    def ky_wave(self) -> Array:
+        return jnp.asarray(self.spectral_ops.ky_wave_symbol(), dtype=self.chi.dtype)
 
 
 @dataclass(frozen=True)
@@ -110,6 +131,7 @@ class SimParams:
     stress_coupling_B: float = 0.0
     k_rxn: float = 1.0
     c_sat: float = 0.0
+    eta_wall: float = 0.0
     c0: float = 1.0
     lambda_bar: float = 10.0
     c_ostwald: float = 0.5
@@ -160,6 +182,7 @@ def _G(
     phi_c: Array,
     phi_q: Array,
     phi_imp: Array,
+    geom: Geometry,
     prm: SimParams,
 ) -> Array:
     """Intrinsic precipitation rate with packing ceiling on all solid fractions (no ``χ``).
@@ -167,7 +190,10 @@ def _G(
     Ostwald partition still uses only ``(ψ_m, ψ_c)`` vs pre-step ``φ_m`` (PHYSICS §3);
     α-quartz is not fed by this channel — only by aging when configured.
     """
-    relu_c = jnp.maximum(c - prm.c_sat, 0.0)
+    c_sat_eff = jnp.asarray(prm.c_sat, dtype=c.dtype) - jnp.asarray(
+        prm.eta_wall, dtype=c.dtype
+    ) * jnp.asarray(geom.ring_left, dtype=c.dtype)
+    relu_c = jnp.maximum(c - c_sat_eff, 0.0)
     relu_p = jnp.maximum(
         1.0
         - _phi_contribution_to_packing(phi_m, prm.phi_m_potential)
@@ -284,11 +310,11 @@ def _update_phase(
     df = builder(phi, **kwargs)
     bar = barrier_prime(phi, lambda_bar=prm.lambda_bar)
     mu_nl = df + bar + phi_other_sum + stress_delta
-    phi_hat = jnp.fft.fft2(phi)
-    nl_hat = jnp.fft.fft2(mu_nl)
+    phi_hat = geom.spectral_ops.forward(phi)
+    nl_hat = geom.spectral_ops.forward(mu_nl)
     den = 1.0 + dt * pot.mobility * geom.k_sq * stiff_sym
     phi_new_hat = (phi_hat - dt * pot.mobility * geom.k_sq * nl_hat) / den
-    phi_new = jnp.real(jnp.fft.ifft2(phi_new_hat))
+    phi_new = jnp.real(geom.spectral_ops.inverse(phi_new_hat))
     return (1.0 - chi) * phi + chi * phi_new
 
 
@@ -328,16 +354,16 @@ def imex_step(
 
     G = jax.lax.cond(
         jnp.asarray(prm.reaction_active),
-        lambda cc: _G(cc[0], cc[1], cc[2], cc[3], cc[4], prm),
+        lambda cc: _G(cc[0], cc[1], cc[2], cc[3], cc[4], geom, prm),
         lambda cc: jnp.zeros_like(cc[0]),
         (c, phi_m, phi_c, phi_q, phi_imp),
     )
 
-    c_hat = jnp.fft.fft2(c)
-    g_hat = jnp.fft.fft2(chi * G)
+    c_hat = geom.spectral_ops.forward(c)
+    g_hat = geom.spectral_ops.forward(chi * G)
     c_den = 1.0 + dt * prm.D_c * geom.k_sq
     c_new_hat = (c_hat - dt * g_hat) / c_den
-    c_lin = jnp.real(jnp.fft.ifft2(c_new_hat))
+    c_lin = jnp.real(geom.spectral_ops.inverse(c_new_hat))
 
     def _grav_c_on(_: Array) -> Array:
         dy_c = body_force_advection_y(c_hat, geom.ky_wave)
@@ -393,7 +419,7 @@ def imex_step(
             "phi_q": prm.gravity_g_phi_q,
             "phi_imp": prm.gravity_g_phi_imp,
         }[name]
-        dy_phi = body_force_advection_y(jnp.fft.fft2(phi_u), geom.ky_wave)
+        dy_phi = body_force_advection_y(geom.spectral_ops.forward(phi_u), geom.ky_wave)
         phi_n = phi_u - dt * jnp.asarray(float(gv), dtype=phi_u.dtype) * dy_phi * chi
         new_phis[name] = phi_n
 
@@ -441,7 +467,12 @@ def imex_step(
         c_new,
     )
     dx_arr = jnp.asarray(geom.dx, dtype=c_new.dtype)
-    injection_this_step = jnp.sum(geom.chi * (c_new - c_before_rim)) * (dx_arr * dx_arr)
+    rim_injection_this_step = jnp.sum(geom.chi * (c_new - c_before_rim)) * (dx_arr * dx_arr)
+
+    phi_m_raw = phi_m_new
+    phi_c_raw = phi_c_new
+    phi_q_raw = phi_q_new
+    phi_imp_raw = phi_imp_new
 
     lo = jnp.asarray(-0.05, dtype=phi_m_new.dtype)
     hi = jnp.asarray(1.05, dtype=phi_m_new.dtype)
@@ -455,6 +486,23 @@ def imex_step(
         phi_imp_new = jnp.clip(phi_imp_new, lo, hi)
     else:
         phi_imp_new = jnp.zeros_like(phi_imp)
+
+    clip_mass_delta = jnp.sum(
+        geom.chi
+        * (
+            jnp.asarray(prm.phi_m_potential.rho, dtype=phi_m_new.dtype) * (phi_m_new - phi_m_raw)
+            + jnp.asarray(prm.phi_c_potential.rho, dtype=phi_c_new.dtype) * (phi_c_new - phi_c_raw)
+            + jnp.asarray(prm.phi_q_potential.rho, dtype=phi_q_new.dtype) * (phi_q_new - phi_q_raw)
+            + jnp.asarray(prm.phi_imp_potential.rho, dtype=phi_imp_new.dtype)
+            * (phi_imp_new - phi_imp_raw)
+        )
+    ) * (dx_arr * dx_arr)
+    injection_this_step = jax.lax.cond(
+        jnp.asarray(prm.dirichlet_active),
+        lambda _: rim_injection_this_step + clip_mass_delta,
+        lambda _: jnp.asarray(0.0, dtype=c_new.dtype),
+        jnp.asarray(0.0, dtype=c_new.dtype),
+    )
 
     delta_pair = jnp.zeros((2,), dtype=c_new.dtype)
     return (phi_m_new, phi_c_new, phi_q_new, phi_imp_new, c_new), (delta_pair, injection_this_step)
