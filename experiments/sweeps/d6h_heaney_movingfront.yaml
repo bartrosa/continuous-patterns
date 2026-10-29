@@ -1,0 +1,56 @@
+sweep:
+  name: d6h_heaney_movingfront
+  nested_results: true
+  base_config: experiments/canonical/slab_twophase/baseline.yaml
+  runs:
+    - run_label: D6H_wide_k1
+      overrides:
+        physics.c1: 0.30
+        physics.c2: 0.15
+        physics.k_L_scale: 1.0
+    - run_label: D6H_wide_k3
+      overrides:
+        physics.c1: 0.30
+        physics.c2: 0.15
+        physics.k_L_scale: 3.0
+    - run_label: D6H_med_k1
+      overrides:
+        physics.c1: 0.27
+        physics.c2: 0.18
+        physics.k_L_scale: 1.0
+    - run_label: D6H_med_k3
+      overrides:
+        physics.c1: 0.27
+        physics.c2: 0.18
+        physics.k_L_scale: 3.0
+    - run_label: D6H_narrow_k1
+      overrides:
+        physics.c1: 0.24
+        physics.c2: 0.21
+        physics.k_L_scale: 1.0
+    - run_label: D6H_narrow_k3
+      overrides:
+        physics.c1: 0.24
+        physics.c2: 0.21
+        physics.k_L_scale: 3.0
+
+overrides:
+  output.save_evolution: true
+  output.evolution_dt: 25.0
+  physics.precipitation: hysteresis
+  physics.demixing: ch
+  physics.gamma: 0.0
+  physics.kappa: 0.5
+  physics.M0: 0.0
+  physics.c_sat: 0.05
+  physics.kappa_rate: 5.0
+  physics.D_c: 0.03
+  physics.bc_right: dirichlet
+  physics.c_0: 0.40
+  physics.c_ostwald: 0.30
+  physics.w_ostwald: 0.05
+  initial.c_init: 0.3
+  geometry.L: 100.0
+  geometry.n: 256
+  time.T: 10000.0
+  time.dt_safety: 0.4

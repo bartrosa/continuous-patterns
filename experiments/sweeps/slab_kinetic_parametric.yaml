@@ -15,7 +15,7 @@ sweep:
     - name: threshold_pair
       merge_into: physics
       values:
-        # Poster replication (Szymczak–Kossacki)
+        # Poster replication (UW reference parameters)
         - c1: 0.49
           c2: 0.10
         - c1: 0.40

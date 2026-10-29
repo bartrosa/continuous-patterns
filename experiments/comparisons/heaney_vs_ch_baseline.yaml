@@ -1,0 +1,22 @@
+comparison:
+  name: heaney_vs_ch_baseline
+  experiments:
+    - run_label: Heaney_osc_Da1
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      overrides:
+        physics.c1: 0.40
+        physics.c2: 0.26
+        time.T: 20.0
+    - run_label: Heaney_stuck_Da1
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      overrides:
+        physics.c1: 0.49
+        physics.c2: 0.10
+        time.T: 20.0
+    - run_label: CH_slab_c0p1
+      model: slab_reactive
+      base_config: experiments/canonical/slab/run_slab_ch.yaml
+      overrides:
+        initial.c_init: 0.1

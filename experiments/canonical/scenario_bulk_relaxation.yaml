@@ -1,0 +1,44 @@
+experiment:
+  name: scenario_bulk_relaxation
+  model: bulk_relaxation
+  seed: 42
+  description: |
+    Stage II bulk relaxation — initial.scenario bulk_relaxation (explicit model).
+
+geometry:
+  type: circular_cavity
+  L: 200.0
+  R: 0.0
+  n: 512
+
+physics:
+  W: 1.0
+  gamma: 4.0
+  kappa_x: 0.5
+  kappa_y: 0.5
+  M_m: 0.01
+  M_c: 1.0
+  D_c: 1.0
+  k_rxn: 0.0
+  c_sat: 0.2
+  c_0: 0.0
+  c_ostwald: 0.6
+  w_ostwald: 0.1
+  lambda_bar: 10.0
+  use_ratchet: false
+
+stress:
+  mode: none
+  sigma_0: 0.0
+  stress_coupling_B: 0.0
+
+time:
+  dt: 0.01
+  T: 10000.0
+  snapshot_every: 1000
+
+output:
+  save_final_state: true
+
+initial:
+  scenario: bulk_relaxation

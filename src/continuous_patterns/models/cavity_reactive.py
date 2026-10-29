@@ -742,7 +742,7 @@ def simulate(
     cumulative_injection = 0.0
 
     outcfg = cfg.get("output", {})
-    flux_dt = float(outcfg.get("flux_sample_dt", 2.0))
+    flux_dt = float(outcfg.get("flux_sample_dt") or 2.0)
     flux_every = max(1, int(round(flux_dt / dt)))
     r_fix_frac = float(outcfg.get("option_b_r_fix_frac", 0.75))
 

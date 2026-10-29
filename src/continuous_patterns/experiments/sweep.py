@@ -18,7 +18,12 @@ import numpy as np
 import yaml
 from tqdm.auto import tqdm
 
-from continuous_patterns.core.io import dumps_json, load_run_config
+from continuous_patterns.core.io import load_run_config
+from continuous_patterns.experiments.checkpoint import (
+    atomic_write_json,
+    find_newest_complete_run,
+    is_run_complete,
+)
 from continuous_patterns.experiments.run import run_one
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -104,6 +109,11 @@ class SweepResult:
     entries: list[dict[str, Any]]
 
 
+def _write_manifest_snapshot(sweep_root: Path, manifest: dict[str, Any]) -> None:
+    atomic_write_json(sweep_root / "manifest.json", manifest)
+    _write_sweep_report(sweep_root / "report.md", manifest)
+
+
 def run_sweep(
     sweep_cfg: dict[str, Any],
     *,
@@ -111,6 +121,7 @@ def run_sweep(
     chunk_size: int = 2000,
     show_progress: bool = True,
     log_level: str = "INFO",
+    resume_root: Path | None = None,
 ) -> SweepResult:
     """Run Cartesian product of ``grid``; write ``manifest.json`` and ``report.md``."""
     sweep_meta = sweep_cfg["sweep"]
@@ -132,11 +143,27 @@ def run_sweep(
             dict(zip(keys, combo, strict=True)) for combo in itertools.product(*values_lists)
         ]
 
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    sweep_root = Path(results_root) / "sweeps" / f"{sweep_name}_{stamp}"
-    sweep_root.mkdir(parents=True, exist_ok=False)
+    if resume_root is not None:
+        sweep_root = Path(resume_root).resolve()
+        if not sweep_root.is_dir():
+            raise FileNotFoundError(f"resume sweep directory not found: {sweep_root}")
+        stamp = sweep_root.name.rsplit("_", 1)[-1]
+        print(f"Resuming sweep in {sweep_root}", flush=True)
+    else:
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        sweep_root = Path(results_root) / "sweeps" / f"{sweep_name}_{stamp}"
+        sweep_root.mkdir(parents=True, exist_ok=False)
 
+    manifest: dict[str, Any] = {
+        "sweep_name": sweep_name,
+        "timestamp": stamp,
+        "base_config": str(base_path.resolve()),
+        "overrides": overrides,
+        "grid": grid,
+        "runs": [],
+    }
     manifest_entries: list[dict[str, Any]] = []
+
     for idx, combo in tqdm(
         enumerate(combinations),
         total=len(combinations),
@@ -146,10 +173,31 @@ def run_sweep(
         leave=True,
     ):
         run_id = f"run_{idx:04d}"
+        exp_name = f"{sweep_name}_{run_id}"
+        existing = find_newest_complete_run(sweep_root, exp_name)
+        if existing is not None and is_run_complete(existing):
+            import json
+
+            summary = json.loads((existing / "summary.json").read_text(encoding="utf-8"))
+            diagnostics_summary = _extract_key_metrics(summary) if isinstance(summary, dict) else {}
+            manifest_entries.append(
+                {
+                    "run_id": run_id,
+                    "status": "success",
+                    "relative_path": existing.relative_to(sweep_root).as_posix(),
+                    "parameters": combo,
+                    "key_metrics": diagnostics_summary,
+                    "resumed": True,
+                }
+            )
+            manifest["runs"] = manifest_entries
+            _write_manifest_snapshot(sweep_root, manifest)
+            continue
+
         cfg_point = copy.deepcopy(base_cfg)
         for dotted_key, value in combo.items():
             _set_dotted(cfg_point, dotted_key, copy.deepcopy(value))
-        cfg_point["experiment"]["name"] = f"{sweep_name}_{run_id}"
+        cfg_point["experiment"]["name"] = exp_name
 
         try:
             result = run_one(
@@ -178,17 +226,8 @@ def run_sweep(
                 "key_metrics": diagnostics_summary,
             }
         )
-
-    manifest: dict[str, Any] = {
-        "sweep_name": sweep_name,
-        "timestamp": stamp,
-        "base_config": str(base_path.resolve()),
-        "overrides": overrides,
-        "grid": grid,
-        "runs": manifest_entries,
-    }
-    (sweep_root / "manifest.json").write_text(dumps_json(manifest), encoding="utf-8")
-    _write_sweep_report(sweep_root / "report.md", manifest)
+        manifest["runs"] = manifest_entries
+        _write_manifest_snapshot(sweep_root, manifest)
 
     return SweepResult(sweep_root=sweep_root, manifest=manifest, entries=manifest_entries)
 
@@ -228,6 +267,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Disable tqdm (sweep bar and per-run bars).",
     )
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        default=None,
+        metavar="SWEEP_DIR",
+        help="Resume an interrupted sweep directory (skip complete runs).",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -246,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
             chunk_size=int(args.chunk_size),
             show_progress=not args.no_progress,
             log_level=str(args.log_level),
+            resume_root=Path(args.resume).resolve() if args.resume is not None else None,
         )
     except Exception as e:
         print(f"Sweep failed: {e}", file=sys.stderr)

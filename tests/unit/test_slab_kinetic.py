@@ -86,3 +86,53 @@ def test_hysteresis_produces_transitions() -> None:
     res = simulate(cfg, show_progress=False)
     n_tr = int(res.diagnostics.get("n_transitions", 0))
     assert n_tr >= 1
+
+
+def _closed_cfg(*, T: float = 2.0, n: int = 200) -> dict:
+    return {
+        "experiment": {"name": "closed", "model": "slab_kinetic", "seed": 1},
+        "geometry": {"type": "kinetic_1d", "n": int(n)},
+        "physics": {
+            "Da": 1.0,
+            "kappa": 3.0,
+            "c1": 0.40,
+            "c2": 0.26,
+            "bc_right": "noflux",
+        },
+        "stress": {"mode": "none"},
+        "gravity": {},
+        "time": {"T": float(T), "dt_safety": 0.4, "snapshot_every": 1000},
+        "output": {},
+        "initial": {"profile": "uniform", "c_init": 1.0},
+    }
+
+
+def test_sk_noflux_conserves_mass() -> None:
+    res = simulate(_closed_cfg(T=2.0), show_progress=False)
+    pct = float(res.diagnostics.get("mass_residual_pct", float("inf")))
+    assert pct < 0.5
+
+
+def test_sk_noflux_right_gradient_zero() -> None:
+    res = simulate(_closed_cfg(T=2.0), show_progress=False)
+    c = np.asarray(res.state_final.c, dtype=np.float64).ravel()
+    assert abs(float(c[-1]) - float(c[-2])) < 1e-12
+
+
+def test_sk_dirichlet_unchanged() -> None:
+    base = {
+        "experiment": {"name": "dir", "model": "slab_kinetic", "seed": 7},
+        "geometry": {"type": "kinetic_1d", "n": 200},
+        "physics": {"Da": 1.0, "kappa": 3.0, "c1": 0.40, "c2": 0.26},
+        "stress": {"mode": "none"},
+        "gravity": {},
+        "time": {"T": 2.0, "dt_safety": 0.4, "snapshot_every": 1000},
+        "output": {},
+        "initial": {"profile": "linear"},
+    }
+    cfg_default = dict(base)
+    cfg_explicit = dict(base)
+    cfg_explicit["physics"] = {**base["physics"], "bc_right": "dirichlet"}
+    n_default = int(simulate(cfg_default, show_progress=False).diagnostics["n_transitions"])
+    n_explicit = int(simulate(cfg_explicit, show_progress=False).diagnostics["n_transitions"])
+    assert n_default == n_explicit

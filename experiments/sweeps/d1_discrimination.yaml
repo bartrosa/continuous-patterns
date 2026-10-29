@@ -1,0 +1,267 @@
+sweep:
+  name: d1_discrimination
+  nested_results: true
+  base_config: experiments/canonical/slab_twophase/baseline.yaml
+  runs:
+    # --- Block A: driven-front CH (lambda(v) at controlled velocity) ---
+    - run_label: D1A_v0p005_f30
+      tier: optional
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.005
+        physics.f_chalcedony: 0.30
+        geometry.L: 200.0
+        geometry.n: 512
+        time.T: 44000.0
+    - run_label: D1A_v0p010_f30
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.010
+        physics.f_chalcedony: 0.30
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 11000.0
+    - run_label: D1A_v0p020_f30
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.020
+        physics.f_chalcedony: 0.30
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 5500.0
+    - run_label: D1A_v0p040_f30
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.040
+        physics.f_chalcedony: 0.30
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 2750.0
+    - run_label: D1A_v0p080_f30
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.080
+        physics.f_chalcedony: 0.30
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 1375.0
+    - run_label: D1A_v0p010_f15
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.010
+        physics.f_chalcedony: 0.15
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 11000.0
+    - run_label: D1A_v0p020_f15
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.020
+        physics.f_chalcedony: 0.15
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 5500.0
+    - run_label: D1A_v0p040_f15
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.040
+        physics.f_chalcedony: 0.15
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 2750.0
+    - run_label: D1A_v0p010_f50
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.010
+        physics.f_chalcedony: 0.50
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 11000.0
+    - run_label: D1A_v0p020_f50
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.020
+        physics.f_chalcedony: 0.50
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 5500.0
+    - run_label: D1A_v0p040_f50
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.v_front: 0.040
+        physics.f_chalcedony: 0.50
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 2750.0
+    - run_label: D1A_v0p020_f30_M0p5
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 0.5
+        physics.v_front: 0.020
+        physics.f_chalcedony: 0.30
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 5500.0
+    - run_label: D1A_v0p020_f30_M2
+      overrides:
+        physics.run_mode: driven
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 2.0
+        physics.v_front: 0.020
+        physics.f_chalcedony: 0.30
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 5500.0
+    # --- Block B: Heaney hysteresis precipitation (slab_twophase) ---
+    - run_label: D1B_base
+      overrides:
+        physics.precipitation: hysteresis
+        physics.demixing: ch
+        physics.gamma: 0.0
+        physics.kappa: 0.5
+        physics.M0: 0.0
+        physics.c1: 0.30
+        physics.c2: 0.25
+        physics.kappa_rate: 5.0
+        physics.D_c: 1.0
+        physics.k_rxn: 0.5
+        physics.c_sat: 0.2
+        physics.c_0: 1.0
+        initial.c_init: 0.3
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: D1B_narrow
+      overrides:
+        physics.precipitation: hysteresis
+        physics.demixing: ch
+        physics.gamma: 0.0
+        physics.kappa: 0.5
+        physics.M0: 0.0
+        physics.c1: 0.28
+        physics.c2: 0.26
+        physics.kappa_rate: 5.0
+        physics.D_c: 1.0
+        physics.k_rxn: 0.5
+        physics.c_sat: 0.2
+        physics.c_0: 1.0
+        initial.c_init: 0.3
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: D1B_strong
+      overrides:
+        physics.precipitation: hysteresis
+        physics.demixing: ch
+        physics.gamma: 0.0
+        physics.kappa: 0.5
+        physics.M0: 0.0
+        physics.c1: 0.30
+        physics.c2: 0.25
+        physics.kappa_rate: 10.0
+        physics.D_c: 1.0
+        physics.k_rxn: 0.5
+        physics.c_sat: 0.2
+        physics.c_0: 1.0
+        initial.c_init: 0.3
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 6000.0
+    # --- Block C: closed cavity agate run ---
+    - run_label: D1C_g4
+      overrides:
+        physics.demixing: ch
+        physics.gamma: 4.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.bc_right: noflux
+        physics.c_sat: 0.05
+        physics.c_ostwald: 0.30
+        physics.w_ostwald: 0.05
+        initial.c_init: 0.45
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 40000.0
+        time.snapshot_every: 10000
+    - run_label: D1C_g8
+      overrides:
+        physics.demixing: ch
+        physics.gamma: 8.0
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.bc_right: noflux
+        physics.c_sat: 0.05
+        physics.c_ostwald: 0.30
+        physics.w_ostwald: 0.05
+        initial.c_init: 0.45
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 40000.0
+        time.snapshot_every: 10000
+
+overrides:
+  output.save_evolution: true
+  output.evolution_dt: 50.0
+  physics.D_c: 1.0
+  physics.k_rxn: 0.5
+  physics.c_sat: 0.2
+  physics.c_0: 1.0
+  physics.c_ostwald: 0.30
+  physics.w_ostwald: 0.05
+  physics.bc_right: dirichlet
+  time.dt_safety: 0.4
+
+block_overrides:
+  B:
+    output.evolution_dt: 25.0
+  C:
+    output.evolution_dt: 100.0

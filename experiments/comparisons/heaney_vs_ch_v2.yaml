@@ -1,0 +1,50 @@
+comparison:
+  name: heaney_vs_ch_v2
+  experiments:
+    - run_label: Heaney_osc_Da1
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      overrides:
+        physics.c1: 0.40
+        physics.c2: 0.26
+        time.T: 20.0
+
+    - run_label: Heaney_stuck_Da1
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      overrides:
+        physics.c1: 0.49
+        physics.c2: 0.10
+        time.T: 20.0
+
+    # Legacy open slab: left seed + right Dirichlet rim (seed=42).
+    # front_origin is measured, not assumed. Golden: band_count_axial == 15.
+    - run_label: CH_open_legacy
+      model: slab_reactive
+      nucleation_side: left
+      base_config: experiments/canonical/slab/run_slab_ch.yaml
+      overrides:
+        initial.c_init: 0.1
+        output.save_evolution: true
+
+    # Single front from right rim only (no left seed). Positions from right wall.
+    - run_label: CH_rim_only
+      model: slab_reactive
+      nucleation_side: right
+      base_config: experiments/canonical/slab/run_slab_ch.yaml
+      overrides:
+        initial.c_init: 0.1
+        initial.phi_m_wall_layer: 0.0
+        initial.phi_m_wall_width_px: 0
+        output.save_evolution: true
+
+    # Closed-system depletion: left seed, no rim silica feed (physics.c_0 = 0).
+    - run_label: CH_closed_seed
+      model: slab_reactive
+      nucleation_side: left
+      base_config: experiments/canonical/slab/run_slab_ch.yaml
+      overrides:
+        initial.c_init: 0.3
+        physics.c_0: 0.0
+        output.save_evolution: true
+      # Report note: c_0=0 disables Dirichlet reservoir feed at the right rim strip.
