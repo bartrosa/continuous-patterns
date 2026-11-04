@@ -1,7 +1,7 @@
 """Post-process a slab_kinetic parametric sweep directory.
 
 Reads ``manifest_axes.json``, writes ``table_all_runs.md``,
-``figure_sweep_summary.png``, and ``figure_szymczak_replication.png``.
+``figure_sweep_summary.png``, and ``figure_poster_kinetic_replication.png``.
 """
 
 from __future__ import annotations
@@ -211,7 +211,7 @@ def plot_sweep_summary(sweep_dir: Path, manifest: dict) -> None:
     plt.close(fig)
 
 
-def plot_szymczak_replication(sweep_dir: Path, manifest: dict) -> None:
+def plot_poster_kinetic_replication(sweep_dir: Path, manifest: dict) -> None:
     entries = _collect_entries(manifest)
     fig, axes = plt.subplots(2, 5, figsize=(22.0, 9.0), sharey=True)
 
@@ -281,9 +281,9 @@ def plot_szymczak_replication(sweep_dir: Path, manifest: dict) -> None:
             if col == 0:
                 ax.set_ylabel(r"$c(0,t)$")
 
-    fig.suptitle("Szymczak poster pairs × Da ∈ {1, 2}, κ = 3", fontsize=13)
+    fig.suptitle("UW poster pairs × Da ∈ {1, 2}, κ = 3", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    fig.savefig(sweep_dir / "figure_szymczak_replication.png", dpi=140)
+    fig.savefig(sweep_dir / "figure_poster_kinetic_replication.png", dpi=140)
     plt.close(fig)
 
 
@@ -305,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
 
     write_table_all_runs(sweep_dir, manifest)
     plot_sweep_summary(sweep_dir, manifest)
-    plot_szymczak_replication(sweep_dir, manifest)
+    plot_poster_kinetic_replication(sweep_dir, manifest)
 
     ok = [e for e in manifest.get("entries", []) if e.get("status") == "success"]
     matches = [e for e in ok if e.get("osc_match") is True]

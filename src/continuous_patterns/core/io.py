@@ -59,7 +59,13 @@ class ExperimentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = "run"
-    model: Literal["cavity_reactive", "bulk_relaxation", "slab_reactive", "slab_kinetic"]
+    model: Literal[
+        "cavity_reactive",
+        "bulk_relaxation",
+        "slab_reactive",
+        "slab_kinetic",
+        "slab_twophase",
+    ]
     seed: int = 42
     description: str | None = None
     scenario: str | None = None
@@ -291,6 +297,17 @@ class Kinetic1DGeometrySpec(BaseModel):
 
     type: Literal["kinetic_1d"]
     n: int = Field(gt=0)
+
+
+class SlabTwophase1DGeometrySpec(BaseModel):
+    """1D two-phase slab on ``x ∈ [0, L]``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["slab_twophase_1d"] = "slab_twophase_1d"
+    L: float = Field(default=100.0, gt=0.0)
+    n: int = Field(gt=2)
+    seed_width_px: int = Field(default=2, ge=1)
 
 
 class PorePressureSpec(BaseModel):
@@ -610,6 +627,16 @@ def apply_physics_phases_legacy_shim(physics: dict[str, Any]) -> None:
     }
 
 
+class SolverSpec(BaseModel):
+    """Optional solver backend knobs (``slab_kinetic`` JAX port)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: Literal["numpy", "jax"] = "numpy"
+    history_every: int | None = Field(default=None, ge=1)
+    max_transitions: int = Field(default=200_000, ge=1)
+
+
 class OutputSpec(BaseModel):
     """Output toggles (extensible for future diagnostics keys)."""
 
@@ -665,32 +692,42 @@ class RunConfigValidated(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     experiment: ExperimentSpec
-    geometry: GeometrySpec | Kinetic1DGeometrySpec
+    geometry: GeometrySpec | Kinetic1DGeometrySpec | SlabTwophase1DGeometrySpec
     physics: dict[str, Any] = Field(default_factory=dict)
     stress: StressSpec = Field(default_factory=StressSpec)
     gravity: GravitySpec = Field(default_factory=GravitySpec)
     time: TimeSpec
     output: OutputSpec = Field(default_factory=OutputSpec)
+    solver: SolverSpec = Field(default_factory=SolverSpec)
     initial: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
-    def _inject_physics_phases_legacy(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            exp = data.get("experiment")
-            if isinstance(exp, dict) and exp.get("model") == "slab_kinetic":
-                return data
-            phys = data.get("physics")
-            if phys is None:
-                data["physics"] = {}
-                phys = data["physics"]
-            if isinstance(phys, dict):
-                apply_physics_phases_legacy_shim(phys)
+    def _inject_geometry_and_physics(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        exp = data.get("experiment")
+        model = exp.get("model") if isinstance(exp, dict) else None
+        if model == "slab_twophase":
+            geom = data.get("geometry")
+            if isinstance(geom, dict) and "type" not in geom:
+                geom = dict(geom)
+                geom["type"] = "slab_twophase_1d"
+                data["geometry"] = geom
+            return data
+        if model == "slab_kinetic":
+            return data
+        phys = data.get("physics")
+        if phys is None:
+            data["physics"] = {}
+            phys = data["physics"]
+        if isinstance(phys, dict):
+            apply_physics_phases_legacy_shim(phys)
         return data
 
     @model_validator(mode="after")
     def _normalize_physics_subdicts(self) -> Self:
-        if self.experiment.model == "slab_kinetic":
+        if self.experiment.model in ("slab_kinetic", "slab_twophase"):
             return self
         phys = self.physics
         phases = phys.get("phases")
@@ -705,7 +742,7 @@ class RunConfigValidated(BaseModel):
 
     @model_validator(mode="after")
     def _stress_geometry_coupling(self) -> Self:
-        if isinstance(self.geometry, Kinetic1DGeometrySpec):
+        if isinstance(self.geometry, (Kinetic1DGeometrySpec, SlabTwophase1DGeometrySpec)):
             return self
         st = self.stress
         g = self.geometry
@@ -749,7 +786,7 @@ class RunConfigValidated(BaseModel):
     def _validate_initial(self) -> Self:
         if self.experiment.model == "slab_kinetic":
             ini_raw = dict(self.initial)
-            allowed = {"profile"}
+            allowed = {"profile", "c_init"}
             bad = sorted(k for k in ini_raw if k not in allowed)
             if bad:
                 raise ValueError(
@@ -759,7 +796,23 @@ class RunConfigValidated(BaseModel):
             prof = str(ini_raw.get("profile", "linear"))
             if prof not in ("linear", "uniform"):
                 raise ValueError("initial.profile must be 'linear' or 'uniform' for slab_kinetic")
-            return self.model_copy(update={"initial": {"profile": prof}})
+            out_ini: dict[str, Any] = {"profile": prof}
+            if "c_init" in ini_raw:
+                out_ini["c_init"] = float(ini_raw["c_init"])
+            return self.model_copy(update={"initial": out_ini})
+        if self.experiment.model == "slab_twophase":
+            ini_raw = dict(self.initial)
+            allowed = {"c_init"}
+            bad = sorted(k for k in ini_raw if k not in allowed)
+            if bad:
+                raise ValueError(
+                    "model='slab_twophase' initial must not set keys other than "
+                    f"{sorted(allowed)}; got {bad}"
+                )
+            out_tp: dict[str, Any] = {}
+            if "c_init" in ini_raw:
+                out_tp["c_init"] = float(ini_raw["c_init"])
+            return self.model_copy(update={"initial": out_tp})
         ini = InitialSpec.model_validate(self.initial, context={"n": int(self.geometry.n)})
         initial_validated = ini.model_dump(mode="python")
         phys = dict(self.physics)
@@ -782,17 +835,189 @@ class RunConfigValidated(BaseModel):
         if self.time.dt_safety is None:
             raise ValueError("model='slab_kinetic' requires time.dt_safety")
         phys = self.physics
-        allowed = frozenset({"Da", "kappa", "c1", "c2"})
+        allowed = frozenset({"Da", "kappa", "c1", "c2", "bc_right"})
         bad = sorted(k for k in phys if k not in allowed)
         if bad:
             raise ValueError(f"model='slab_kinetic' physics must not set: {bad}")
         for key in ("Da", "kappa", "c1", "c2"):
             if key not in phys:
                 raise ValueError(f"model='slab_kinetic' requires physics.{key}")
+        bc = str(phys.get("bc_right", "dirichlet")).lower()
+        if bc not in ("dirichlet", "noflux"):
+            raise ValueError(
+                "model='slab_kinetic' physics.bc_right must be 'dirichlet' or 'noflux'"
+            )
         if self.stress.mode != "none":
             raise ValueError("model='slab_kinetic' requires stress.mode='none'")
         if any(abs(float(v)) > 0.0 for v in self.gravity.model_dump().values()):
             raise ValueError("model='slab_kinetic' requires all gravity fields to be zero")
+        return self
+
+    @model_validator(mode="after")
+    def _slab_twophase_cross_validate(self) -> Self:
+        if self.experiment.model != "slab_twophase":
+            return self
+        if not isinstance(self.geometry, SlabTwophase1DGeometrySpec):
+            raise ValueError("model='slab_twophase' requires geometry.type='slab_twophase_1d'")
+        if self.time.dt_safety is None:
+            raise ValueError("model='slab_twophase' requires time.dt_safety")
+        phys = self.physics
+        demixing = str(phys.get("demixing", "ac")).lower()
+        if demixing not in ("ac", "ch"):
+            raise ValueError("model='slab_twophase' physics.demixing must be 'ac' or 'ch'")
+
+        shared = frozenset(
+            {
+                "demixing",
+                "gamma",
+                "D_c",
+                "k_rxn",
+                "c_sat",
+                "c_0",
+                "c_ostwald",
+                "w_ostwald",
+                "bc_right",
+                "rho",
+                "run_mode",
+                "precipitation",
+                "v_front",
+                "f_chalcedony",
+                "c1",
+                "c2",
+                "kappa_rate",
+                "noise_amp",
+                "k_L_scale",
+            }
+        )
+        ac_only = frozenset({"kappa_s", "L_s"})
+        ch_only = frozenset({"kappa", "M0", "phi_gate"})
+        reject_legacy = frozenset({"L_m", "L_c", "W"})
+        reject_ch_w_msg = (
+            "model='slab_twophase' demixing='ch' no longer accepts physics.W "
+            "(demixing uses gamma·φ_m²·φ_c² exchange only; internal KERNEL_W=0.0 is fixed)"
+        )
+
+        if demixing == "ac":
+            allowed = shared | ac_only
+            reject_mode = ch_only
+            required = (
+                "gamma",
+                "kappa_s",
+                "L_s",
+                "D_c",
+                "k_rxn",
+                "c_sat",
+                "c_0",
+                "c_ostwald",
+                "w_ostwald",
+            )
+        else:
+            allowed = shared | ch_only
+            reject_mode = ac_only
+            required = (
+                "gamma",
+                "kappa",
+                "M0",
+                "D_c",
+                "k_rxn",
+                "c_sat",
+                "c_0",
+                "c_ostwald",
+                "w_ostwald",
+            )
+
+        bad = sorted(k for k in phys if k not in allowed)
+        if bad:
+            raise ValueError(f"model='slab_twophase' physics must not set: {bad}")
+        for key in reject_mode:
+            if key in phys:
+                raise ValueError(
+                    f"model='slab_twophase' demixing={demixing!r} must not set {key!r}"
+                )
+        for key in reject_legacy:
+            if key in phys:
+                if key == "W" and demixing == "ch":
+                    raise ValueError(reject_ch_w_msg)
+                raise ValueError(
+                    f"model='slab_twophase' physics must not set removed v1 field: {key!r}"
+                )
+        for key in required:
+            if key not in phys:
+                raise ValueError(f"model='slab_twophase' requires physics.{key}")
+
+        bc = str(phys.get("bc_right", "dirichlet")).lower()
+        if bc not in ("dirichlet", "noflux"):
+            raise ValueError(
+                "model='slab_twophase' physics.bc_right must be 'dirichlet' or 'noflux'"
+            )
+        run_mode = str(phys.get("run_mode", "reactive")).lower()
+        if run_mode not in ("reactive", "driven"):
+            raise ValueError(
+                "model='slab_twophase' physics.run_mode must be 'reactive' or 'driven'"
+            )
+        precip = str(phys.get("precipitation", "ostwald")).lower()
+        if precip not in ("ostwald", "hysteresis"):
+            raise ValueError(
+                "model='slab_twophase' physics.precipitation must be 'ostwald' or 'hysteresis'"
+            )
+        if run_mode == "driven":
+            if demixing != "ch":
+                raise ValueError("model='slab_twophase' run_mode='driven' requires demixing='ch'")
+            if "v_front" not in phys:
+                raise ValueError("model='slab_twophase' run_mode='driven' requires physics.v_front")
+            if "f_chalcedony" not in phys:
+                raise ValueError(
+                    "model='slab_twophase' run_mode='driven' requires physics.f_chalcedony"
+                )
+            if float(phys["v_front"]) <= 0.0:
+                raise ValueError("physics.v_front must be > 0 for driven mode")
+        if precip == "hysteresis":
+            for key in ("c1", "c2", "kappa_rate"):
+                if key not in phys:
+                    raise ValueError(
+                        f"model='slab_twophase' precipitation='hysteresis' requires physics.{key}"
+                    )
+            if float(phys["c1"]) <= float(phys["c2"]):
+                raise ValueError("physics.c1 must be > c2 for hysteresis precipitation")
+        reject_2d = frozenset(
+            {
+                "R",
+                "rim_width",
+                "rim_alpha",
+                "gravity_rim_alpha",
+                "reaction_active",
+                "dirichlet_active",
+                "eta_wall",
+                "phases",
+                "aging",
+                "use_ratchet",
+                "phi_m_ratchet_low",
+                "phi_m_ratchet_high",
+                "lambda_bar",
+                "M_m",
+                "M_c",
+                "rho_m",
+                "rho_c",
+            }
+        )
+        for key in reject_2d:
+            if key in phys:
+                raise ValueError(
+                    f"model='slab_twophase' physics must not set 2D-only field: {key!r}"
+                )
+        if self.stress.mode != "none":
+            raise ValueError("model='slab_twophase' requires stress.mode='none'")
+        if any(abs(float(v)) > 0.0 for v in self.gravity.model_dump().values()):
+            raise ValueError("model='slab_twophase' requires all gravity fields to be zero")
+        return self
+
+    @model_validator(mode="after")
+    def _solver_backend_scope(self) -> Self:
+        if self.solver.backend != "numpy" and self.experiment.model not in (
+            "slab_kinetic",
+            "slab_twophase",
+        ):
+            raise ValueError("solver.backend != 'numpy' is only supported for model='slab_kinetic'")
         return self
 
 
@@ -1029,6 +1254,20 @@ def load_run_config(
         )
     cfg = RunConfigValidated.model_validate(merged)
     return cfg.model_dump(mode="python")
+
+
+def validate_run_config_dict(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Validate a merged run config and return the normalized dict."""
+    return RunConfigValidated.model_validate(cfg).model_dump(mode="python")
+
+
+def config_hash(cfg: dict[str, Any]) -> str:
+    """SHA-256 fingerprint of the validated run config (hex, first 16 chars)."""
+    import hashlib
+
+    validated = validate_run_config_dict(cfg)
+    canonical = yaml.safe_dump(validated, sort_keys=True, default_flow_style=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def save_run_config(path: Path, cfg: dict[str, Any]) -> None:

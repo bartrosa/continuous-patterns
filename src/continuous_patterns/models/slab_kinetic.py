@@ -1,14 +1,13 @@
-"""Kinetic 1D agate banding model (Szymczak–Kossacki).
+"""Kinetic 1D agate banding model (Heaney).
 
-Reproduces the 1D reaction–diffusion model of Kossacki & Szymczak (UW poster).
-Single concentration field ``c(x, t)`` on ``x ∈ [0, 1]`` with Dirichlet reservoir
-at ``x = 1`` and hysteretic Robin crystallization boundary at ``x = 0``.
+Implements the Heaney kinetic-hysteresis deposition clock: a single concentration
+field ``c(x, t)`` on ``x ∈ [0, 1]`` with Dirichlet reservoir at ``x = 1`` and
+hysteretic Robin crystallization boundary at ``x = 0``. See ``docs/TERMINOLOGY.md``.
 
 References
 ----------
-J. Kossacki, P. Szymczak — "Formation of Rhythmic Band Structures in Agates"
-(University of Warsaw, Faculty of Physics poster; based on Heaney & Davis,
-Science 269, 1562–1565, 1995).
+Heaney & Davis, Science 269, 1562–1565 (1995) — canonical citation [confirm].
+UW poster reference parameters used in validation sweeps (see ``poster_kinetic_analytical``).
 """
 
 from __future__ import annotations
@@ -109,6 +108,14 @@ def build_time_params(cfg: dict[str, Any]) -> KineticTimeParams:
     )
 
 
+def _bc_right(cfg: dict[str, Any]) -> str:
+    p = cfg.get("physics") or {}
+    bc = str(p.get("bc_right", "dirichlet")).lower()
+    if bc not in ("dirichlet", "noflux"):
+        raise ValueError("physics.bc_right must be 'dirichlet' or 'noflux'")
+    return bc
+
+
 def build_initial_state(
     cfg: dict[str, Any],
     geom: KineticGeometry,
@@ -121,7 +128,8 @@ def build_initial_state(
     if profile == "linear":
         c0 = np.asarray(geom.x, dtype=np.float64)
     elif profile == "uniform":
-        c0 = np.ones(geom.n, dtype=np.float64)
+        c_init = float(ini.get("c_init", 1.0))
+        c0 = np.full(geom.n, c_init, dtype=np.float64)
     else:
         raise ValueError("initial.profile must be 'linear' or 'uniform'")
     return KineticState(c=c0, state="L", t=0.0)
@@ -131,20 +139,26 @@ def _robin_r(state: str, kappa: float) -> float:
     return float(kappa) if state == "H" else 1.0
 
 
-def simulate(
+def _backend_name(cfg: dict[str, Any]) -> str:
+    solver = cfg.get("solver")
+    if isinstance(solver, dict) and solver.get("backend") is not None:
+        return str(solver["backend"])
+    return "numpy"
+
+
+def _simulate_numpy(
     cfg: dict[str, Any],
     *,
-    chunk_size: int = 2000,  # noqa: ARG001 — interface parity with spectral models
     show_progress: bool = True,
 ) -> SimResult:
-    """Run the ``slab_kinetic`` explicit-Euler integrator (NumPy)."""
-    del chunk_size
+    """Run the ``slab_kinetic`` explicit-Euler integrator (NumPy reference)."""
     t_wall0 = time.perf_counter()
 
     geom = build_geometry(cfg)
     prm = build_params(cfg)
     tm = build_time_params(cfg)
     ic = build_initial_state(cfg, geom, prm)
+    bc_right = _bc_right(cfg)
 
     dx = geom.dx
     dt = float(tm.dt_safety) * dx * dx / 2.0
@@ -171,12 +185,15 @@ def simulate(
     snap_c: list[np.ndarray] = []
 
     thickness = 0.0
+    influx_integral = 0.0
+    c_init_integral = float(np.trapezoid(ic.c, geom.x))
     pbar = tqdm(
         total=n_steps,
         desc="slab_kinetic",
         unit="step",
         leave=True,
         disable=not show_progress,
+        miniters=max(1, n_steps // 200),
     )
 
     for step in range(n_steps):
@@ -185,7 +202,10 @@ def simulate(
         lap = (c[2:] - 2.0 * c[1:-1] + c[:-2]) / (dx * dx)
         c_new = np.empty_like(c)
         c_new[1:-1] = c[1:-1] + dt * lap
-        c_new[-1] = 1.0
+        if bc_right == "dirichlet":
+            c_new[-1] = 1.0
+        else:
+            c_new[-1] = c_new[-2]
         c_new[0] = c_new[1] / (1.0 + r_robin * Da * dx)
 
         if state == "L" and float(c_new[0]) > c1:
@@ -197,6 +217,9 @@ def simulate(
 
         r_thick = _robin_r(state, kappa)
         thickness += dt * r_thick * float(c_new[0])
+        if bc_right == "dirichlet":
+            dc_dx_right = (1.0 - float(c_new[-2])) / dx
+            influx_integral += dt * dc_dx_right
 
         c[:] = c_new
         t += dt
@@ -229,6 +252,15 @@ def simulate(
 
     transitions_json = [{"t": float(tv), "kind": str(k)} for tv, k in transitions]
 
+    domain_mass = float(np.trapezoid(c, geom.x))
+    deposit_mass = Da * thickness
+    if bc_right == "dirichlet":
+        ledger_residual = abs(domain_mass + deposit_mass - c_init_integral - influx_integral)
+    else:
+        ledger_residual = abs(domain_mass + deposit_mass - c_init_integral)
+    denom = max(abs(c_init_integral), 1e-30)
+    mass_residual_pct = 100.0 * ledger_residual / denom
+
     diagnostics: dict[str, Any] = {
         "n_transitions": int(len(transitions)),
         "dwell_L_mean": dwell_L_mean,
@@ -240,6 +272,8 @@ def simulate(
         "mean_dwell_period": float(mean_period["mean_dwell_period"]),
         "mean_dwell_freq": float(mean_period["mean_dwell_freq"]),
         "thickness_final": float(thickness),
+        "mass_residual_pct": float(mass_residual_pct),
+        "bc_right": bc_right,
         "wall_time_s": float(wall_s),
         "n_steps": int(n_steps),
         "dt": float(dt),
@@ -298,3 +332,21 @@ def simulate(
         diagnostics=diagnostics,
         config_resolved=dict(cfg),
     )
+
+
+def simulate(
+    cfg: dict[str, Any],
+    *,
+    chunk_size: int = 2000,  # noqa: ARG001 — interface parity with spectral models
+    show_progress: bool = True,
+) -> SimResult:
+    """Run ``slab_kinetic``; dispatches on ``cfg['solver']['backend']`` (default NumPy)."""
+    del chunk_size
+    backend = _backend_name(cfg)
+    if backend == "jax":
+        from continuous_patterns.models.slab_kinetic_jax import simulate_jax
+
+        return simulate_jax(cfg, show_progress=show_progress)
+    if backend != "numpy":
+        raise ValueError(f"Unknown slab_kinetic solver backend: {backend!r}")
+    return _simulate_numpy(cfg, show_progress=show_progress)

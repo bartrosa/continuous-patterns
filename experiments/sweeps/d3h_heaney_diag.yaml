@@ -1,0 +1,89 @@
+sweep:
+  name: d3h_heaney_diag
+  nested_results: true
+  base_config: experiments/canonical/slab_twophase/baseline.yaml
+  runs:
+    - run_label: D3H_fix1
+      overrides:
+        physics.precipitation: hysteresis
+        physics.demixing: ch
+        physics.gamma: 0.0
+        physics.kappa: 0.5
+        physics.M0: 0.0
+        physics.c_sat: 0.05
+        physics.c1: 0.49
+        physics.c2: 0.10
+        physics.k_L_scale: 1.0
+        physics.kappa_rate: 3.0
+        physics.D_c: 1.0
+        physics.k_rxn: 0.5
+        physics.c_0: 1.0
+        initial.c_init: 0.3
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: D3H_fix2
+      overrides:
+        physics.precipitation: hysteresis
+        physics.demixing: ch
+        physics.gamma: 0.0
+        physics.kappa: 0.5
+        physics.M0: 0.0
+        physics.c_sat: 0.05
+        physics.c1: 0.45
+        physics.c2: 0.20
+        physics.k_L_scale: 1.0
+        physics.kappa_rate: 3.0
+        physics.D_c: 1.0
+        physics.k_rxn: 0.5
+        physics.c_0: 1.0
+        initial.c_init: 0.3
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: D3H_fix3
+      overrides:
+        physics.precipitation: hysteresis
+        physics.demixing: ch
+        physics.gamma: 0.0
+        physics.kappa: 0.5
+        physics.M0: 0.0
+        physics.c_sat: 0.05
+        physics.c1: 0.49
+        physics.c2: 0.10
+        physics.k_L_scale: 3.0
+        physics.kappa_rate: 3.0
+        physics.D_c: 1.0
+        physics.k_rxn: 0.5
+        physics.c_0: 1.0
+        initial.c_init: 0.3
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: D3H_fix4
+      overrides:
+        physics.precipitation: hysteresis
+        physics.demixing: ch
+        physics.gamma: 0.0
+        physics.kappa: 0.5
+        physics.M0: 0.0
+        physics.c_sat: 0.05
+        physics.c1: 0.49
+        physics.c2: 0.10
+        physics.k_L_scale: 1.0
+        physics.kappa_rate: 10.0
+        physics.D_c: 1.0
+        physics.k_rxn: 0.5
+        physics.c_0: 1.0
+        initial.c_init: 0.3
+        geometry.L: 100.0
+        geometry.n: 256
+        time.T: 6000.0
+
+overrides:
+  output.save_evolution: true
+  output.evolution_dt: 25.0
+  physics.c_ostwald: 0.30
+  physics.w_ostwald: 0.05
+  physics.bc_right: dirichlet
+  time.dt_safety: 0.4

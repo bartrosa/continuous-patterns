@@ -28,6 +28,7 @@ from continuous_patterns.core.io import (
     save_run_config,
     save_snapshots_h5,
     save_summary,
+    validate_run_config_dict,
     write_figures_final,
 )
 from continuous_patterns.core.plotting import (
@@ -42,6 +43,7 @@ from continuous_patterns.models import (
     cavity_reactive,
     slab_kinetic,
     slab_reactive,
+    slab_twophase,
 )
 
 MODEL_DISPATCH: dict[str, Any] = {
@@ -49,6 +51,7 @@ MODEL_DISPATCH: dict[str, Any] = {
     "bulk_relaxation": bulk_relaxation.simulate,
     "slab_reactive": slab_reactive.simulate,
     "slab_kinetic": slab_kinetic.simulate,
+    "slab_twophase": slab_twophase.simulate,
 }
 
 logger = logging.getLogger(__name__)
@@ -94,6 +97,149 @@ def _setup_run_logger(paths: ResultPaths | None, log_level: str) -> logging.Hand
     return file_handler
 
 
+def write_slab_kinetic_run_artifacts(
+    result: SimResult,
+    cfg: dict[str, Any],
+    paths: ResultPaths,
+    *,
+    wall_s: float,
+) -> None:
+    """Write ``slab_kinetic`` NPZ/figure artifacts (config/summary assumed written)."""
+    include_panel = bool(cfg.get("output", {}).get("include_params_panel", True))
+    ts_human = parse_run_stamp_utc(paths.root.name)
+    exp_name = str(cfg["experiment"]["name"])
+    fig_title = f"{exp_name} — {ts_human}" if ts_human else exp_name
+
+    meta = result.meta if isinstance(result.meta, dict) else {}
+    sk_raw = meta.get("slab_kinetic")
+    sk: dict[str, Any] = sk_raw if isinstance(sk_raw, dict) else {}
+    c_final = np.asarray(result.state_final.c, dtype=np.float64).ravel()
+    np.savez_compressed(
+        paths.final_state_npz,
+        c_final=c_final,
+        state_final=np.asarray(str(sk.get("state_final_str", "L"))),
+        thickness_final=float(sk.get("thickness_final", 0.0)),
+        t_final=float(sk.get("t_final", 0.0)),
+    )
+    np.savez_compressed(
+        paths.root / "history.npz",
+        t_history=np.asarray(sk["t_history"]),
+        c_at_x0_history=np.asarray(sk["c_at_x0_history"]),
+        state_history=np.asarray(sk["state_history"]),
+        thickness_history=np.asarray(sk["thickness_history"]),
+    )
+    np.savez_compressed(
+        paths.root / "snapshots.npz",
+        snapshots_t=np.asarray(sk["snapshots_t"]),
+        snapshots_c=np.asarray(sk["snapshots_c"]),
+    )
+    tr_raw = sk.get("transitions")
+    transitions_list: list[tuple[float, str]] = []
+    if isinstance(tr_raw, list):
+        for item in tr_raw:
+            if isinstance(item, tuple) and len(item) == 2:
+                transitions_list.append((float(item[0]), str(item[1])))
+            elif isinstance(item, list) and len(item) == 2:
+                transitions_list.append((float(item[0]), str(item[1])))
+    diag_panel = {**result.diagnostics, "wall_time_s": wall_s}
+    plot_slab_kinetic_figures_final(
+        paths.root,
+        t_hist=np.asarray(sk["t_history"]),
+        c0_hist=np.asarray(sk["c_at_x0_history"]),
+        st_hist=np.asarray(sk["state_history"]),
+        th_hist=np.asarray(sk["thickness_history"]),
+        snapshots_t=np.asarray(sk["snapshots_t"]),
+        snapshots_c=np.asarray(sk["snapshots_c"]),
+        c1=float(cfg["physics"]["c1"]),
+        c2=float(cfg["physics"]["c2"]),
+        transitions=transitions_list,
+        cfg=cfg,
+        diagnostics=diag_panel,
+        title=fig_title,
+        include_params_panel=include_panel,
+    )
+
+
+def write_slab_twophase_run_artifacts(
+    result: SimResult,
+    cfg: dict[str, Any],
+    paths: ResultPaths,
+    *,
+    wall_s: float,
+) -> None:
+    """Write ``slab_twophase`` NPZ/snapshot artifacts."""
+    meta = result.meta if isinstance(result.meta, dict) else {}
+    tp_raw = meta.get("slab_twophase")
+    tp: dict[str, Any] = tp_raw if isinstance(tp_raw, dict) else {}
+    phi_m = np.asarray(result.state_final.phi_m, dtype=np.float64).ravel()
+    phi_c = np.asarray(result.state_final.phi_c, dtype=np.float64).ravel()
+    c = np.asarray(result.state_final.c, dtype=np.float64).ravel()
+    np.savez_compressed(
+        paths.final_state_npz,
+        phi_m=phi_m,
+        phi_c=phi_c,
+        c=c,
+        t_final=float(tp.get("t_final", 0.0)),
+    )
+    gcfg = cfg.get("geometry", {})
+    domain_L = float(tp.get("domain_L", gcfg.get("L", 100.0)))
+    snap_payload: dict[str, Any] = {
+        "snapshots_t": np.asarray(tp.get("snapshots_t", []), dtype=np.float64),
+        "snapshots_solid": np.asarray(tp.get("snapshots_solid", np.zeros((0, phi_m.size)))),
+        "snapshots_c0": np.asarray(tp.get("snapshots_c0", []), dtype=np.float64),
+        "snapshots_c_front": np.asarray(tp.get("snapshots_c_front", []), dtype=np.float64),
+        "snapshots_x_front": np.asarray(tp.get("snapshots_x_front", []), dtype=np.float64),
+        "domain_L": domain_L,
+        "seed_exclude_x": float(tp.get("seed_exclude_x", 0.0)),
+    }
+    if "snapshots_c_dep" in tp:
+        snap_payload["snapshots_c_dep"] = np.asarray(tp["snapshots_c_dep"], dtype=np.float64)
+    if "snapshots_S" in tp:
+        snap_payload["snapshots_S"] = np.asarray(tp["snapshots_S"])
+    if "snapshots_t_state" in tp:
+        snap_payload["snapshots_t_state"] = np.asarray(tp["snapshots_t_state"], dtype=np.float64)
+    for extra_key in (
+        "snapshots_rate_total",
+        "snapshots_supply_front",
+        "snapshots_consume_front",
+        "snapshots_k_eff",
+        "snapshots_gap_width",
+        "snapshots_Da",
+    ):
+        if extra_key in tp:
+            snap_payload[extra_key] = np.asarray(tp[extra_key], dtype=np.float64)
+    np.savez_compressed(paths.root / "snapshots.npz", **snap_payload)
+    diag_panel = {**result.diagnostics, "wall_time_s": wall_s}
+    logger.info(
+        "slab_twophase artifacts: mass_residual_pct=%.4f min_phi_w=%.4g n_projection_events=%d",
+        float(diag_panel.get("mass_residual_pct", float("nan"))),
+        float(diag_panel.get("min_phi_w", float("nan"))),
+        int(diag_panel.get("n_projection_events", 0)),
+    )
+
+
+def write_slab_reactive_banding_snapshots(
+    result: SimResult,
+    paths: ResultPaths,
+    gcfg: dict[str, Any],
+) -> None:
+    """Write evolution snapshots for banding kymographs (``save_evolution``)."""
+    meta = result.meta if isinstance(result.meta, dict) else {}
+    raw = meta.get("banding_snapshots")
+    if not isinstance(raw, list) or not raw:
+        return
+    times = np.asarray([float(item[0]) for item in raw], dtype=np.float64)
+    solids = np.stack([np.asarray(item[1], dtype=np.float64).ravel() for item in raw], axis=0)
+    c_mean = np.asarray([float(item[2]) for item in raw], dtype=np.float64)
+    np.savez_compressed(
+        paths.root / "snapshots.npz",
+        snapshots_t=times,
+        snapshots_solid=solids,
+        snapshots_c_mean=c_mean,
+        domain_L=float(gcfg.get("L", 1.0)),
+    )
+
+
 def run_one(
     cfg: dict[str, Any],
     *,
@@ -102,6 +248,7 @@ def run_one(
     write_artifacts: bool = True,
     show_progress: bool = True,
     log_level: str = "INFO",
+    summary_extra: dict[str, Any] | None = None,
 ) -> SimResult:
     """Run one simulation; optionally write ``results/`` artifacts.
 
@@ -116,7 +263,7 @@ def run_one(
     if (
         not _warned_cuda_kernel_version_note
         and jax.default_backend() == "gpu"
-        and model_name != "slab_kinetic"
+        and model_name not in ("slab_kinetic", "slab_twophase")
     ):
         logger.warning(
             "CUDA note: messages like "
@@ -128,6 +275,8 @@ def run_one(
 
     cfg.setdefault("output", {})
     cfg["output"]["record_spectral_mass_diagnostic"] = True
+
+    cfg = validate_run_config_dict(cfg)
 
     paths: ResultPaths | None = None
     if write_artifacts:
@@ -148,7 +297,10 @@ def run_one(
         if write_artifacts:
             assert paths is not None
             save_run_config(paths.config_yaml, cfg)
-            save_summary(paths.summary_json, result.diagnostics)
+            summary_payload = dict(result.diagnostics)
+            if summary_extra:
+                summary_payload.update(summary_extra)
+            save_summary(paths.summary_json, summary_payload)
             gcfg = cfg.get("geometry", {})
             include_panel = bool(cfg.get("output", {}).get("include_params_panel", True))
             ts_human = parse_run_stamp_utc(paths.root.name)
@@ -156,54 +308,9 @@ def run_one(
             fig_title = f"{exp_name} — {ts_human}" if ts_human else exp_name
 
             if model_name == "slab_kinetic":
-                meta = result.meta if isinstance(result.meta, dict) else {}
-                sk_raw = meta.get("slab_kinetic")
-                sk: dict[str, Any] = sk_raw if isinstance(sk_raw, dict) else {}
-                c_final = np.asarray(result.state_final.c, dtype=np.float64).ravel()
-                np.savez_compressed(
-                    paths.final_state_npz,
-                    c_final=c_final,
-                    state_final=np.asarray(str(sk.get("state_final_str", "L"))),
-                    thickness_final=float(sk.get("thickness_final", 0.0)),
-                    t_final=float(sk.get("t_final", 0.0)),
-                )
-                np.savez_compressed(
-                    paths.root / "history.npz",
-                    t_history=np.asarray(sk["t_history"]),
-                    c_at_x0_history=np.asarray(sk["c_at_x0_history"]),
-                    state_history=np.asarray(sk["state_history"]),
-                    thickness_history=np.asarray(sk["thickness_history"]),
-                )
-                np.savez_compressed(
-                    paths.root / "snapshots.npz",
-                    snapshots_t=np.asarray(sk["snapshots_t"]),
-                    snapshots_c=np.asarray(sk["snapshots_c"]),
-                )
-                tr_raw = sk.get("transitions")
-                transitions_list: list[tuple[float, str]] = []
-                if isinstance(tr_raw, list):
-                    for item in tr_raw:
-                        if isinstance(item, tuple) and len(item) == 2:
-                            transitions_list.append((float(item[0]), str(item[1])))
-                        elif isinstance(item, list) and len(item) == 2:
-                            transitions_list.append((float(item[0]), str(item[1])))
-                diag_panel = {**result.diagnostics, "wall_time_s": wall_s}
-                plot_slab_kinetic_figures_final(
-                    paths.root,
-                    t_hist=np.asarray(sk["t_history"]),
-                    c0_hist=np.asarray(sk["c_at_x0_history"]),
-                    st_hist=np.asarray(sk["state_history"]),
-                    th_hist=np.asarray(sk["thickness_history"]),
-                    snapshots_t=np.asarray(sk["snapshots_t"]),
-                    snapshots_c=np.asarray(sk["snapshots_c"]),
-                    c1=float(cfg["physics"]["c1"]),
-                    c2=float(cfg["physics"]["c2"]),
-                    transitions=transitions_list,
-                    cfg=cfg,
-                    diagnostics=diag_panel,
-                    title=fig_title,
-                    include_params_panel=include_panel,
-                )
+                write_slab_kinetic_run_artifacts(result, cfg, paths, wall_s=wall_s)
+            elif model_name == "slab_twophase":
+                write_slab_twophase_run_artifacts(result, cfg, paths, wall_s=wall_s)
             else:
                 save_final_state_npz(
                     paths.final_state_npz,
@@ -237,6 +344,8 @@ def run_one(
                     params=params_for_panel,
                     include_params_panel=include_panel,
                 )
+                if model_name == "slab_reactive":
+                    write_slab_reactive_banding_snapshots(result, paths, gcfg)
             out = cfg.get("output", {})
             if bool(out.get("save_jablczynski_plot", False)):
                 jab = result.diagnostics.get("jab_canonical")

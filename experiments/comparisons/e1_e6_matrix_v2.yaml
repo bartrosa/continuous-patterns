@@ -1,0 +1,43 @@
+comparison:
+  name: e1_e6_matrix_v2
+  experiments:
+    - run_label: E1_Heaney_open
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      overrides:
+        physics.c1: 0.40
+        physics.c2: 0.26
+        time.T: 20.0
+      regression:
+        n_transitions: [110, 120]
+    - run_label: E2_Heaney_control
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      overrides:
+        physics.c1: 0.49
+        physics.c2: 0.10
+        time.T: 20.0
+      regression:
+        n_transitions_max: 1
+    - run_label: E3_Heaney_closed
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      e3_pairs:
+        - {c1: 0.70, c2: 0.66, label: "0.70/0.66"}
+        - {c1: 0.60, c2: 0.56, label: "0.60/0.56"}
+        - {c1: 0.50, c2: 0.46, label: "0.50/0.46"}
+    - run_label: E4_TP_gamma4_open
+      model: slab_twophase
+      base_config: experiments/canonical/slab_twophase/baseline.yaml
+      overrides: {}
+    - run_label: E5_TP_gamma0_open
+      model: slab_twophase
+      base_config: experiments/canonical/slab_twophase/baseline.yaml
+      overrides:
+        physics.gamma: 0.0
+    - run_label: E6_TP_gamma4_closed
+      model: slab_twophase
+      base_config: experiments/canonical/slab_twophase/baseline.yaml
+      overrides:
+        physics.bc_right: noflux
+        initial.c_init: 0.5

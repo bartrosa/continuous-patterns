@@ -249,16 +249,19 @@ def simulate(
     cumulative_injection = 0.0
 
     outcfg = cfg.get("output", {})
-    flux_dt = float(outcfg.get("flux_sample_dt", 2.0))
+    flux_dt = float(outcfg.get("flux_sample_dt") or 2.0)
     flux_every = max(1, int(round(flux_dt / dt)))
     r_fix_frac = float(outcfg.get("option_b_r_fix_frac", 0.75))
 
     save_h5 = bool(outcfg.get("save_snapshots_h5", False))
     record_gif = bool(outcfg.get("record_evolution_gif", False))
-    need_snapshots = save_h5 or record_gif
+    save_banding_snaps = bool(outcfg.get("save_evolution", False))
+    need_snapshots = save_h5 or record_gif or save_banding_snaps
 
     h5_snapshots: list[dict[str, Any]] = []
     gif_snapshots: list[tuple[float, np.ndarray]] = []
+    banding_snapshots: list[tuple[float, np.ndarray, float]] = []
+    banding_snap_max = int(outcfg.get("banding_snapshot_max_frames", 120))
 
     meta: dict[str, Any] = {
         "effective_cavity_R": float(geom.R),
@@ -280,6 +283,16 @@ def simulate(
         meta["h5_snapshots"] = h5_snapshots
     if record_gif:
         meta["gif_snapshots"] = gif_snapshots
+
+    def _append_banding_profile(step: int, t_snap: float) -> None:
+        if not save_banding_snaps:
+            return
+        pm = np.asarray(jax.device_get(state[0]), dtype=np.float64)
+        pc = np.asarray(jax.device_get(state[1]), dtype=np.float64)
+        cc = np.asarray(jax.device_get(state[4]), dtype=np.float64)
+        solid = np.mean(pm + pc, axis=1)
+        c_mean = float(np.mean(cc))
+        banding_snapshots.append((float(t_snap), solid.copy(), c_mean))
 
     snap_every = int(tcfg.get("snapshot_every", 10**9))
     if snap_every < 1:
@@ -314,15 +327,17 @@ def simulate(
             h5_list=h5_snapshots if save_h5 else None,
             gif_list=gif_snapshots if record_gif else None,
         )
+        _append_banding_profile(0, 0.0)
         meta["snapshots"].append({"step": 0, "t": 0.0})
 
     wall_t0 = time.perf_counter()
     pbar = tqdm(
         total=n_total,
-        desc=str(exp.get("name", "run")),
+        desc=str(exp.get("name", "slab_reactive")),
         unit="step",
         disable=not show_progress,
         leave=True,
+        miniters=max(1, n_total // 200),
     )
     try:
         while current_step < n_total:
@@ -360,18 +375,18 @@ def simulate(
 
             if need_snapshots and current_step > 0:
                 if current_step % snap_every == 0 or current_step == n_total:
+                    t_snap = float(current_step * dt)
                     _append_host_fields_snapshot(
                         state,
                         step=current_step,
-                        t=float(current_step * dt),
+                        t=t_snap,
                         save_h5=save_h5,
                         record_gif=record_gif,
                         h5_list=h5_snapshots if save_h5 else None,
                         gif_list=gif_snapshots if record_gif else None,
                     )
-                    meta["snapshots"].append(
-                        {"step": int(current_step), "t": float(current_step * dt)}
-                    )
+                    _append_banding_profile(current_step, t_snap)
+                    meta["snapshots"].append({"step": int(current_step), "t": t_snap})
                     logger.info(
                         "Snapshot at t=%.1f (step %d)",
                         float(current_step * dt),
@@ -420,6 +435,11 @@ def simulate(
     meta["M_total_initial"] = m_total_initial
     meta["M_total_final"] = m_total_final
     meta["cumulative_dirichlet_injection"] = cumulative_injection
+    if banding_snapshots:
+        if len(banding_snapshots) > banding_snap_max:
+            pick = np.linspace(0, len(banding_snapshots) - 1, banding_snap_max, dtype=int)
+            banding_snapshots = [banding_snapshots[int(i)] for i in pick]
+        meta["banding_snapshots"] = banding_snapshots
 
     if bool(outcfg.get("record_spectral_mass_diagnostic", False)):
         try:

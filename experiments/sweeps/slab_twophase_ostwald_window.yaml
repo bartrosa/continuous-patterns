@@ -1,0 +1,69 @@
+sweep:
+  name: slab_twophase_ostwald_window
+  nested_results: true
+  base_config: experiments/canonical/slab_twophase/baseline.yaml
+  runs:
+    - run_label: S1_cost0p22_g4
+      overrides:
+        physics.demixing: ch
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.gamma: 4.0
+        physics.c_ostwald: 0.22
+        physics.w_ostwald: 0.05
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: S1_cost0p25_g4
+      overrides:
+        physics.demixing: ch
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.gamma: 4.0
+        physics.c_ostwald: 0.25
+        physics.w_ostwald: 0.05
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: S1_cost0p30_g4
+      overrides:
+        physics.demixing: ch
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.gamma: 4.0
+        physics.c_ostwald: 0.30
+        physics.w_ostwald: 0.05
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: S1_cost0p40_g4
+      overrides:
+        physics.demixing: ch
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.gamma: 4.0
+        physics.c_ostwald: 0.40
+        physics.w_ostwald: 0.05
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: S1_cost0p25_g2
+      overrides:
+        physics.demixing: ch
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.gamma: 2.0
+        physics.c_ostwald: 0.25
+        physics.w_ostwald: 0.05
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: S1_cost0p25_g8
+      overrides:
+        physics.demixing: ch
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.gamma: 8.0
+        physics.c_ostwald: 0.25
+        physics.w_ostwald: 0.05
+        geometry.n: 256
+        time.T: 6000.0
+
+overrides:
+  output.save_evolution: true
+  output.evolution_dt: 50.0

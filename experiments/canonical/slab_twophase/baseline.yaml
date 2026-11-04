@@ -1,0 +1,38 @@
+experiment:
+  name: slab_twophase_baseline
+  model: slab_twophase
+  seed: 42
+
+geometry:
+  L: 100.0
+  n: 512
+  seed_width_px: 2
+
+physics:
+  demixing: ac
+  gamma: 4.0
+  kappa_s: 0.5
+  L_s: 1.0
+  D_c: 1.0
+  k_rxn: 0.5
+  c_sat: 0.2
+  c_0: 1.0
+  c_ostwald: 0.6
+  w_ostwald: 0.1
+  bc_right: dirichlet
+
+stress:
+  mode: none
+
+initial:
+  c_init: 0.3
+
+time:
+  T: 20000.0
+  dt_safety: 0.4
+  snapshot_every: 500
+
+output:
+  save_final_state: true
+  save_evolution: true
+  evolution_dt: 50.0

@@ -1,0 +1,130 @@
+comparison:
+  name: d5_master_comparison
+  figure_out: figure_master_comparison.png
+  figure_banners: true
+  figure_subtitle: "Silica banding: Heaney kinetic clock vs Cahn-Hilliard demixing, across supply geometries."
+  footer_note: "D5H reaction-limited Heaney moving-front ingested; two-tier figure banners"
+  d1_sweep_dir: results/slab_twophase/d1_discrimination/20260607T141449Z
+  d5h_sweep_dir: results/slab_twophase/d5h_heaney_reaction_limited
+  d5_verdict_path: results/slab_twophase/d5h_heaney_reaction_limited/d5_part_a_verdict.json
+  experiments:
+    # --- Heaney model ---
+    - run_label: E1_Heaney_open
+      display_label: E1 Heaney open
+      variant_banner: "Open slab, fixed gap | the clock works (115 bands)"
+      mechanism_class: Heaney kinetic clock
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      overrides:
+        physics.c1: 0.40
+        physics.c2: 0.26
+        time.T: 20.0
+      regression:
+        n_transitions: [110, 120]
+    - run_label: E2_Heaney_control
+      display_label: E2 Heaney control (poster c1/c2)
+      variant_banner: "Poster c1/c2 control | marginal (≈1 band)"
+      mechanism_class: Heaney kinetic clock
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      overrides:
+        physics.c1: 0.49
+        physics.c2: 0.10
+        time.T: 20.0
+      regression:
+        n_transitions_max: 1
+    - run_label: E3_Heaney_closed
+      display_label: E3 Heaney closed
+      variant_banner: "Closed cavity | block -> bands -> block"
+      mechanism_class: Heaney kinetic clock
+      model: slab_kinetic
+      base_config: experiments/canonical/slab_kinetic/baseline.yaml
+      e3_pairs:
+        - {c1: 0.70, c2: 0.66, label: "0.70/0.66"}
+        - {c1: 0.60, c2: 0.56, label: "0.60/0.56"}
+        - {c1: 0.50, c2: 0.46, label: "0.50/0.46"}
+    - run_label: E9_Heaney_movingfront
+      display_label: E9 Heaney moving front
+      variant_banner: "Moving front (this work) | pending verdict"
+      mechanism_class: Heaney moving front (hysteresis)
+      model: slab_twophase
+      ingest: d5h_best
+    # --- Cahn-Hilliard driven (ingest D1) ---
+    - run_label: E10_D1A_v0p010_f30
+      display_label: D1A_v0p010_f30
+      variant_banner: "Driven front, eutectic | lambda shrinks with v (v^-1/2)"
+      mechanism_class: CH driven eutectic
+      model: slab_twophase
+      ingest: d1
+      ingest_run: D1A_v0p010_f30
+    - run_label: E11_D1A_v0p020_f30
+      display_label: D1A_v0p020_f30
+      mechanism_class: CH driven eutectic
+      model: slab_twophase
+      ingest: d1
+      ingest_run: D1A_v0p020_f30
+    - run_label: E12_D1A_v0p040_f30
+      display_label: D1A_v0p040_f30
+      mechanism_class: CH driven eutectic
+      model: slab_twophase
+      ingest: d1
+      ingest_run: D1A_v0p040_f30
+    - run_label: E13_D1A_v0p080_f30
+      display_label: D1A_v0p080_f30
+      mechanism_class: CH driven eutectic
+      model: slab_twophase
+      ingest: d1
+      ingest_run: D1A_v0p080_f30
+    - run_label: E14_D1A_v0p020_f15
+      display_label: D1A_v0p020_f15
+      variant_banner: "Driven front | duty cycle = deposited fraction f"
+      mechanism_class: CH driven duty=f
+      model: slab_twophase
+      ingest: d1
+      ingest_run: D1A_v0p020_f15
+    - run_label: E15_D1A_v0p020_f50
+      display_label: D1A_v0p020_f50
+      mechanism_class: CH driven duty=f
+      model: slab_twophase
+      ingest: d1
+      ingest_run: D1A_v0p020_f50
+    # --- CH gated ---
+    - run_label: E7_TP_gamma4_CH_baselineOstwald
+      display_label: E7 CH baseline-Ostwald
+      variant_banner: "Gated Ostwald (full S1 model) | bands inside the window"
+      mechanism_class: CH gated Ostwald
+      model: slab_twophase
+      base_config: experiments/canonical/slab_twophase/baseline.yaml
+      overrides:
+        physics.demixing: ch
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        geometry.n: 256
+        time.T: 6000.0
+    - run_label: E8_TP_gamma4_CH_matchedOstwald
+      display_label: E8 CH matched-Ostwald
+      mechanism_class: CH gated Ostwald
+      model: slab_twophase
+      base_config: experiments/canonical/slab_twophase/baseline.yaml
+      overrides:
+        physics.demixing: ch
+        physics.kappa: 0.5
+        physics.M0: 1.0
+        physics.c_ostwald: 0.25
+        physics.w_ostwald: 0.05
+        geometry.n: 256
+        time.T: 6000.0
+    # --- CH closed cavity (ingest D1) ---
+    - run_label: E16_D1C_g4
+      display_label: D1C_g4
+      variant_banner: "Closed cavity | supersaturation eaten in one pass, no bands"
+      mechanism_class: CH closed cavity
+      model: slab_twophase
+      ingest: d1
+      ingest_run: D1C_g4
+    - run_label: E17_D1C_g8
+      display_label: D1C_g8
+      mechanism_class: CH closed cavity
+      model: slab_twophase
+      ingest: d1
+      ingest_run: D1C_g8
